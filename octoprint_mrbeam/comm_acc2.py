@@ -498,7 +498,7 @@ class MachineCom(object):
 
 	# TODO CLEM Inject color
 	def setColors(self,currentFileName, colors):
-		print ('>>>>>>>>>>>>>>>>>>>|||||||||||||||<<<<<<<<<<<<<<<<<<<<', currentFileName, colors)
+		print ('TODO :Inject color settings here', currentFileName, colors)
 
 	def _gcode_command_for_cmd(self, cmd):
 		"""
@@ -912,7 +912,7 @@ class MachineCom(object):
 		self._soft_reset()
 		self._acc_line_buffer = []
 		self._send_event.clear(completely=True)
-		self._changeState(self.STATE_LOCKED)
+		self._changeState(self.STATE_OPERATIONAL)
 
 		payload = {
 			"file": self._currentFile.getFilename(),
