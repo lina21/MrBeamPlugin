@@ -256,6 +256,7 @@ class IoBeamHandler(object):
 		:param callback:
 		'''
 		try:
+			self._logger.debug("<%s> subscribe()  _callbacks_lock.writer_acquire()", threading.current_thread().name)
 			self._callbacks_lock.writer_acquire()
 			if event in self._callbacks:
 				self._callbacks[event].append(callback)
@@ -264,10 +265,12 @@ class IoBeamHandler(object):
 		except:
 			self._logger.exception("Exception while subscribing to event '%s': ", event)
 		finally:
+			self._logger.debug("<%s> subscribe()  _callbacks_lock.writer_release()", threading.current_thread().name)
 			self._callbacks_lock.writer_release()
 
 	def _call_callback(self, _trigger_event, message, kwargs):
 		try:
+			self._logger.debug("<%s> _call_callback()  _callbacks_lock.reader_acquire()", threading.current_thread().name)
 			self._callbacks_lock.reader_acquire()
 			if _trigger_event in self._callbacks:
 				_callback_array = self._callbacks[_trigger_event]
@@ -277,7 +280,7 @@ class IoBeamHandler(object):
 				# If handling of these messages blockes iobeam_handling, we might need a threadpool or so.
 				# One thread for handling this is almost the same bottleneck as current solution,
 				# so I think we would need a thread pool here... But maybe this would be just over engineering.
-				self.__execute_callback_called_by_new_thread(_trigger_event, _callback_array, kwargs)
+				self.__execute_callback_called_by_new_thread(_trigger_event, _callback_array, False, kwargs)
 
 				# thread_params = dict(target = self.__execute_callback_called_by_new_thread,
 				#                      name = "iobeamCB_{}".format(_trigger_event),
@@ -289,12 +292,15 @@ class IoBeamHandler(object):
 		except:
 			self._logger.exception("Exception in _call_callback() _trigger_event: %s, message: %s, kwargs: %s", _trigger_event, message, kwargs)
 		finally:
+			self._logger.debug("<%s> _call_callback()  _callbacks_lock.reader_release()", threading.current_thread().name)
 			self._callbacks_lock.reader_release()
 
 
-	def __execute_callback_called_by_new_thread(self, _trigger_event, _callback_array, kwargs):
+	def __execute_callback_called_by_new_thread(self, _trigger_event, _callback_array, acquire_readLock, kwargs):
 		try:
-			self._callbacks_lock.reader_acquire()
+			if acquire_readLock:
+				self._logger.debug("<%s> __execute_callback_called_by_new_thread()  _callbacks_lock.reader_acquire()", threading.current_thread().name)
+				self._callbacks_lock.reader_acquire()
 			for my_cb in _callback_array:
 				try:
 					my_cb(kwargs)
@@ -303,7 +309,9 @@ class IoBeamHandler(object):
 		except:
 			self._logger.exception("Exception in __execute_callback_called_by_new_thread() for event: %s : ", _trigger_event)
 		finally:
-			self._callbacks_lock.reader_release()
+			if acquire_readLock:
+				self._logger.debug("<%s> __execute_callback_called_by_new_thread()  _callbacks_lock.reader_release()", threading.current_thread().name)
+				self._callbacks_lock.reader_release()
 
 	def _subscribe(self):
 		self._event_bus.subscribe(OctoPrintEvents.SHUTDOWN, self.shutdown)
@@ -415,7 +423,7 @@ class IoBeamHandler(object):
 
 			err = -1
 			message_count =+ 1
-			# self._logger.debug("_handleMessages() handling message: %s", message)
+			self._logger.debug("<%s> _handleMessages() handling message: %s", threading.current_thread().name, message)
 
 			tokens = message.split(self.MESSAGE_SEPARATOR)
 			if len(tokens) <=1:

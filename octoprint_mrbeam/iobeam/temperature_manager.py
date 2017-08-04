@@ -76,10 +76,10 @@ class TemperatureManager(object):
 			self.shutdown()
 
 	def handle_temp(self, kwargs):
-		self.logger.debug("<%s> handle_temp() kwargs: %s", threading.current_thread().name, kwargs)
+		self._logger.debug("<%s> handle_temp() kwargs: %s", threading.current_thread().name, kwargs)
 		temp = kwargs['temp'] if 'temp' in kwargs else None
 		if temp:
-			self.logger.debug("handle_temp() setting temp: %s", temp)
+			self._logger.debug("handle_temp() setting temp: %s", temp)
 			self.temperature = temp
 			self.temperature_ts = time.time()
 			self.send_status_to_frontend(self.temperature)
@@ -185,7 +185,7 @@ class TemperatureManager(object):
 			self._logger.warn("Cooling break duration passed: %ss - Current temp: %s", self.cooling_duration, self.temperature)
 			self.cooling_resume()
 		else:
-			self._logger.debug("Laser temperature nothing. Current temp: %s, self.is_cooling(): %s", self.temperatur, self.is_cooling())
+			self._logger.debug("_check_temp_val() nothing. Current temp: %s, self.is_cooling(): %s", self.temperature, self.is_cooling())
 			pass
 
 	def send_cooling_state_to_frontend(self, cooling):

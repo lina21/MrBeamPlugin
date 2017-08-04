@@ -100,6 +100,7 @@ class DustManager(object):
 	def _stop_dust_extraction_thread(self):
 		command_thread = threading.Thread(target=self._stop_dust_extraction)
 		command_thread.daemon = True
+		command_thread.name = "DustExtraction"
 		command_thread.start()
 
 	def _stop_dust_extraction(self):
@@ -110,6 +111,7 @@ class DustManager(object):
 		if self._trail_extraction is None:
 			self._trail_extraction = threading.Thread(target=self._wait_until, args=(value,))
 			self._trail_extraction.daemon = True
+			self._trail_extraction.name = "DustExtractionWhenBlow"
 			self._trail_extraction.start()
 
 	def _wait_until(self, value):
@@ -149,6 +151,7 @@ class DustManager(object):
 		self._start_dust_extraction_thread()
 		self._auto_timer = threading.Timer(value, self._auto_timer_callback)
 		self._auto_timer.daemon = True
+		self._auto_timer.start = "DustTimedAuto"
 		self._auto_timer.start()
 
 	def _auto_timer_callback(self):
@@ -209,6 +212,7 @@ class DustManager(object):
 		if not self._shutting_down:
 			self._dust_timer = threading.Timer(self._dust_timer_interval, self._dust_timer_callback)
 			self._dust_timer.daemon = True
+			self._dust_timer.name = "DustTimer"
 			self._dust_timer.start()
 		else:
 			self._logger.debug("Shutting down.")
