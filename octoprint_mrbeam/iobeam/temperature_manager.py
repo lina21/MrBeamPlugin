@@ -59,6 +59,7 @@ class TemperatureManager(object):
 		self._shutting_down = True
 
 	def reset(self):
+		self._logger.debug("<%s> reset()", threading.current_thread().name)
 		self.temperature_max = _mrbeam_plugin_implementation.laserCutterProfileManager.get_current_or_default()['laser']['max_temperature']
 		self.hysteresis_temperature = _mrbeam_plugin_implementation.laserCutterProfileManager.get_current_or_default()['laser']['hysteresis_temperature']
 		self.cooling_duration = _mrbeam_plugin_implementation.laserCutterProfileManager.get_current_or_default()['laser']['cooling_duration']
@@ -67,42 +68,51 @@ class TemperatureManager(object):
 		self.send_cooling_state_to_frontend(self.is_cooling())
 
 	def onEvent(self, event, payload):
-		if event == IoBeamValueEvents.LASER_TEMP:
-			self.handle_temp(payload)
-		elif event in (OctoPrintEvents.PRINT_DONE, OctoPrintEvents.PRINT_FAILED, OctoPrintEvents.PRINT_CANCELLED):
+		# if event == IoBeamValueEvents.LASER_TEMP:
+		# 	self.handle_temp(payload)
+		if event in (OctoPrintEvents.PRINT_DONE, OctoPrintEvents.PRINT_FAILED, OctoPrintEvents.PRINT_CANCELLED):
 			self.reset()
 		elif event == OctoPrintEvents.SHUTDOWN:
 			self.shutdown()
 
 	def handle_temp(self, kwargs):
-		self.temperature = kwargs['temp']
-		self.temperature_ts = time.time()
+		self.logger.debug("<%s> handle_temp() kwargs: %s", threading.current_thread().name, kwargs)
+		temp = kwargs['temp'] if 'temp' in kwargs else None
+		if temp:
+			self.logger.debug("handle_temp() setting temp: %s", temp)
+			self.temperature = temp
+			self.temperature_ts = time.time()
+			self.send_status_to_frontend(self.temperature)
 		self._check_temp_val()
-		self.send_status_to_frontend(self.temperature)
 
 	def request_temp(self):
 		'''
 		Send a temperature request to iobeam
 		:return: True if sent successfully, False otherwise.
 		'''
+		self._logger.debug("<%s> request_temp()", threading.current_thread().name)
 		return _mrbeam_plugin_implementation._ioBeam.send_temperature_request()
 
 	def cooling_stop(self):
 		'''
 		Stop the laser for cooling purpose
 		'''
+		self._logger.debug("<%s> cooling_stop()", threading.current_thread().name)
 		if  _mrbeam_plugin_implementation._oneButtonHandler.is_printing():
 			self._logger.debug("cooling_stop()")
 			self.is_cooling_since = time.time()
 			_mrbeam_plugin_implementation._oneButtonHandler.cooling_down_pause()
 			_mrbeam_plugin_implementation._event_bus.fire(MrBeamEvents.LASER_COOLING_PAUSE, dict(temp=self.temperature))
 			self.send_cooling_state_to_frontend(True)
+		else:
+			self._logger.debug("cooling_stop() nothing to do")
+
 
 	def cooling_resume(self):
 		'''
 		Resume laser once the laser has cooled down enough.
 		'''
-		self._logger.debug("cooling_resume()")
+		self._logger.debug("<%s> cooling_resume()", threading.current_thread().name)
 		_mrbeam_plugin_implementation._event_bus.fire(MrBeamEvents.LASER_COOLING_RESUME, dict(temp=self.temperature))
 		_mrbeam_plugin_implementation._oneButtonHandler.cooling_down_end(only_if_behavior_is_cooling=True)
 		self.is_cooling_since = 0
@@ -111,6 +121,7 @@ class TemperatureManager(object):
 		return (self.is_cooling_since is not None and self.is_cooling_since > 0)
 
 	def is_temperature_recent(self):
+		self._logger.debug("<%s> is_temperature_recent(): self.temperature: %s, self.temperature_ts: %s", threading.current_thread().name, self.temperature, self.temperature_ts)
 		if self.temperature is None:
 			if not self.dev_mode:
 				self._logger.error("is_temperature_recent(): Laser temperature is None. never received a temperature value.")
@@ -120,10 +131,12 @@ class TemperatureManager(object):
 			self._logger.error("is_temperature_recent(): Laser temperature too old: must be more recent than %s s but actual age is %s s",
 			                   self.TEMP_MAX_AGE, age)
 			return False
+		self._logger.debug("is_temperature_recent(): yes")
 		return True
 
 	def _temp_timer_callback(self):
 		try:
+			self._logger.debug("<%s> _temp_timer_callback()", threading.current_thread().name)
 			if not self._shutting_down:
 				self.request_temp()
 				self._stop_if_temp_is_not_current()
@@ -134,6 +147,7 @@ class TemperatureManager(object):
 			self._start_temp_timer()
 
 	def _start_temp_timer(self):
+		self._logger.debug("<%s> _start_temp_timer()", threading.current_thread().name)
 		if not self._shutting_down:
 			self.temp_timer = threading.Timer(self.TEMP_TIMER_INTERVAL, self._temp_timer_callback)
 			self.temp_timer.daemon = True
@@ -143,12 +157,14 @@ class TemperatureManager(object):
 			self._logger.debug("Shutting down.")
 
 	def _stop_if_temp_is_not_current(self):
+		self._logger.debug("<%s> _stop_if_temp_is_not_current()", threading.current_thread().name)
 		if not self.is_temperature_recent():
 			if not self.dev_mode:
 				self._logger.error("_stop_if_temp_is_not_current() Laser temperature is not recent. Stopping laser.")
 			self.cooling_stop()
 
 	def _check_temp_val(self):
+		self._logger.debug("<%s> _check_temp_val()", threading.current_thread().name)
 		# cooling break
 		if not self.is_cooling() and (self.temperature is None or self.temperature > self.temperature_max):
 			self._logger.info("Laser temperature exceeded limit. Current temp: %s, max: %s", self.temperature, self.temperature_max)
@@ -169,7 +185,7 @@ class TemperatureManager(object):
 			self._logger.warn("Cooling break duration passed: %ss - Current temp: %s", self.cooling_duration, self.temperature)
 			self.cooling_resume()
 		else:
-			# self._logger.debug("Laser temperature nothing. Current temp: %s, self.is_cooling(): %s", self.temperatur, self.is_cooling())
+			self._logger.debug("Laser temperature nothing. Current temp: %s, self.is_cooling(): %s", self.temperatur, self.is_cooling())
 			pass
 
 	def send_cooling_state_to_frontend(self, cooling):
