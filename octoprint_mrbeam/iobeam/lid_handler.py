@@ -160,13 +160,12 @@ class PhotoCreator(object):
 				self._capture()
 				# check if still active...
 				if self.active:
-					# todo QUESTION: should the tmp_img_raw ever be showed in frontend?
-					move_from = self.tmp_img_raw
+					# move_from = self.tmp_img_raw
 					correction_result = dict(successful_correction=False)
 					if self.image_correction_enabled:
 						correction_result = self.correct_image(self.tmp_img_raw, self.tmp_img_prepared)
 						self._write_cam_analytics(correction_result)
-						# todo ANDY concept of what should happen with good and bad pictures etc....
+						# TODO ANDY concept of what should happen with good and bad pictures etc....
 						if correction_result['successful_correction']:
 							move_from = self.tmp_img_prepared
 							self._move_img(move_from, self.final_image_path)
@@ -178,9 +177,8 @@ class PhotoCreator(object):
 								self.badQualityPicCount += 1
 								self._logger.error(errorString+' Number of bad quality pics: {}'.format(self.badQualityPicCount))
 								# todo get the maximum for badquality pics from settings
-								if self.badQualityPicCount > 10:
-									self._logger.error('Too many bad pics! Show bad image now.'.format(self.badQualityPicCount))
-									self._move_img(move_from, self.final_image_path)
+								# if self.badQualityPicCount > 10:
+								# 	self._logger.error('Too many bad pics!')
 							elif errorID == 'NO_CALIBRATION':
 								self._logger.error(errorString)
 							elif errorID == 'NO_PICTURE_FOUND':
