@@ -203,8 +203,15 @@ $(function () {
 			if (plugin !== "mrbeam" || !data)
 				return;
 			if ('beam_cam_new_image' in data) {
-				// update markers
-			    var markers = data['beam_cam_new_image']['markers_found'];
+
+			    // backwards compability
+			    if('markers' in data['beam_cam_new_image']){
+			        var markers = data['beam_cam_new_image']['markers'];
+                }else{
+			        var markers = data['beam_cam_new_image']['markers_found'];
+                }
+
+			    // update markers
                 self.foundNW(markers['NW'] && markers['NW'].recognized);
                 self.foundNE(markers['NE'] && markers['NE'].recognized);
                 self.foundSW(markers['SW'] && markers['SW'].recognized);

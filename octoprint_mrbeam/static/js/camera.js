@@ -37,10 +37,17 @@ $(function(){
         self.onDataUpdaterPluginMessage = function(plugin, data) {
             if (plugin !== "mrbeam" || !data) return;
             if ('beam_cam_new_image' in data) {
-                const mf = data['beam_cam_new_image']['markers_found'];
+
+                // backwards compability
+			    if('markers' in data['beam_cam_new_image']){
+                    var mf = data['beam_cam_new_image']['markers'];
+                }else{
+                    var mf = data['beam_cam_new_image']['markers_found'];
+                }
+
                 if(mf['NW'] !== undefined){
-                    const pixels = '['+mf['NW']['pixels']+','+mf['NE']['pixels']+','+mf['SW']['pixels']+','+mf['SE']['pixels']+']';
-                    const circles = '['+mf['NW']['r']+','+mf['NE']['r']+','+mf['SW']['r']+','+mf['SE']['r']+']';
+                    var pixels = '['+mf['NW']['pixels']+','+mf['NE']['pixels']+','+mf['SW']['pixels']+','+mf['SE']['pixels']+']';
+                    var circles = '['+mf['NW']['r']+','+mf['NE']['r']+','+mf['SW']['r']+','+mf['SE']['r']+']';
                     console.log('New Image [NW,NE,SW,SE]: Pix '+pixels+' Rad '+circles,data['beam_cam_new_image']);
                 }
                 if(data['beam_cam_new_image']['error'] === undefined){

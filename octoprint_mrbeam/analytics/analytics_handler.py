@@ -58,8 +58,6 @@ class AnalyticsHandler(object):
 			os.makedirs(analyticsfolder)
 
 		self._jsonfile = os.path.join(analyticsfolder, self._settings.get(['analytics','filename']))
-		if not os.path.isfile(self._jsonfile):
-			self._init_jsonfile()
 
 		if self._analyticsOn:
 			# check if <two days> have passed and software should be written away
@@ -243,13 +241,17 @@ class AnalyticsHandler(object):
 	def store_conversion_details(self, details):
 		try:
 			if self._analyticsOn:
+
+				self._storedConversions = []
+				timestamp = time.time()
+
 				if 'engrave' in details and details['engrave'] == True and 'raster' in details:
 					eventname = ak.CONV_ENGRAVE
 					data = {
 						'svgDPI': details['svgDPI']
 					}
 					data.update(details['raster'])
-					self._store_conversion_details(eventname,payload=data)
+					self._store_conversion_details(eventname,timestamp,payload=data)
 					# self._write_jobevent(eventname,payload=data)
 
 				if 'vector' in details and details['vector'] != []:
@@ -259,22 +261,22 @@ class AnalyticsHandler(object):
 							'svgDPI': details['svgDPI']
 						}
 						data.update(color_settings)
-						self._store_conversion_details(eventname,payload=data)
+						self._store_conversion_details(eventname,timestamp,payload=data)
 						# self._write_jobevent(eventname,payload=data)
 		except Exception as e:
 			self._logger.error('Error during store_conversion_details: {}'.format(e.message))
 
-	def _store_conversion_details(self,eventname,payload=None):
+	def _store_conversion_details(self,eventname,timestamp,payload=None):
 		data = {
 			ak.SERIALNUMBER: self._getSerialNumber(),
 			ak.TYPE: ak.JOB_EVENT,
 			ak.VERSION: self._conversion_log_version,
 			ak.EVENT: eventname,
-			ak.TIMESTAMP: time.time(),
+			ak.TIMESTAMP: timestamp,
 			ak.JOB_ID: None
 		}
 		if payload is not None:
-			data.update(payload)
+			data[ak.DATA] = payload
 		self._storedConversions.append(data)
 
 
@@ -291,7 +293,11 @@ class AnalyticsHandler(object):
 
 	def _write_deviceinfo(self,event,payload=None):
 		try:
-			data = dict()
+			data = {
+				ak.HOSTNAME: self._getHostName(),
+				ak.SERIALNUMBER: self._getSerialNumber(),
+				ak.LASERHEAD_VERSION: self._getLaserHeadVersion()
+			}
 			# TODO add data validation/preparation here
 			if payload is not None:
 				data[ak.DATA] = payload
@@ -439,12 +445,7 @@ class AnalyticsHandler(object):
 
 	def _init_jsonfile(self):
 		open(self._jsonfile, 'w+').close()
-		data = {
-			ak.HOSTNAME: self._getHostName(),
-			ak.SERIALNUMBER: self._getSerialNumber(),
-			ak.LASERHEAD_VERSION: self._getLaserHeadVersion()
-		}
-		self._write_deviceinfo(ak.INIT,payload=data)
+		self._write_deviceinfo(ak.INIT)
 		self._write_current_software_status()
 
 	def _append_data_to_file(self, data):
