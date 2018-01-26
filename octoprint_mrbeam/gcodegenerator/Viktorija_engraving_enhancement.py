@@ -74,6 +74,7 @@ plt.imshow(distances)
 # setting gcode
 # -------------------------------------------
 #%% scan 
+#%% scan 
 file = open(gcodefile,'w')
 image_copy = np.copy(image)
 #i,j=(first_row,first_col)
@@ -115,8 +116,7 @@ gcode += "M3S0 \n" # set the laser on
 gcode += "G0" + "X" + str(first_row/5) + "Y" + str(first_col/5) + "Z0\n" 
 
 # starting the loop
-while (np.mean(image_copy)<0.99):
-#while (np.mean(image_copy) != 1):
+while ((sum(image_copy[image_copy<white_thresh])) > 0):
 
 #    count = count + 1
 #    if count > max_count:
@@ -242,25 +242,33 @@ while (np.mean(image_copy)<0.99):
 #        print ("I already remember something, I don't need a new value")
 #        just_to_save_some_time = 1
 #    else:
-    if direction_left_right == 1:
-        for j_next in range (j+5,j_max):
-            if image_copy[i,j_next] <= white_thresh and j_next <= j_max:
-#                    print("entered here, just for debugging")
-                j_remember = j_next
-                i_remember = i
-                remember = 1
-                direction_remember = direction_left_right
-#                    print ("I have future value in the positive direction", i_remember, j_remember)
+    for j_next in range (1,max(j_max-j,j)):
+        if j+j_next*direction_left_right < j_max and j+j_next*direction_left_right>=0:
+            if image_copy[i,j+j_next*direction_left_right] <= white_thresh:
+                if change_made == 0:
+                    j = j + j_next*direction_left_right
+                    change_made = 1
+                else:
+                    j_remember = j + j_next*direction_left_right
+                    i_remember = i
+                    remember = 1
+                    direction_remember = direction_left_right
+                    #print ("future and current values", i_remember, j_remember, i, j)
                 break
-    else:
-        for j_next in range (j-5,-1,-1):
-            if image_copy[i,j_next] <= white_thresh and j_next >= 0:
-                j_remember = j_next
-                i_remember = i
-                remember = 1
-                direction_remember = direction_left_right
-#                    print ("I have future value in the negative direction",  i_remember, j_remember)
+        if j-j_next*direction_left_right < j_max and j-j_next*direction_left_right>=0:
+            if image_copy[i,j-j_next*direction_left_right] <= white_thresh:
+                if change_made == 0:
+                    j = j - j_next*direction_left_right
+                    change_made = 1
+                    direction_left_right = direction_left_right * (-1) 
+                else:
+                    j_remember = j - j_next*direction_left_right
+                    i_remember = i
+                    remember = 1
+                    direction_remember = direction_left_right
+                    #print ("future and current values", i_remember, j_remember, i, j)
                 break
+
 
     # if a new value is set to i or j continue                
     if change_made == 1:
@@ -272,6 +280,7 @@ while (np.mean(image_copy)<0.99):
         turn_laser_off = 0
         remember = 0
         end_reached = -1
+        direction_left_right = direction_remember 
 #        print ("now use the remembered value")
         continue
     
@@ -279,22 +288,16 @@ while (np.mean(image_copy)<0.99):
     if end_reached == -1:
         i = i + 1 if i+1<i_max else 0
         direction_left_right = direction_left_right * (-1)
-        change_made = 1 # only for debugging
+        change_made = 0 # only for debugging
         turn_laser_off = 0
         end_reached = 1
         continue
 #        print ("I am at the end, the direction is: ", direction_left_right)
     else:
         direction_left_right = direction_left_right * (-1)
-        change_made = 1 # only for debugging
+        change_made = 0 # only for debugging
         turn_laser_off = 0
         end_reached = -1
 #        print ("I was once at the end, the direction is: ", direction_left_right)
-#%%
-#br = 0
-#for ii in range (image.shape[0]):
-#    for jj in range(image.shape[1]):
-#        if image[ii,jj] <= white_thresh:
-#            br = br + 1
-#print (br) 
+
 print("done :)")
