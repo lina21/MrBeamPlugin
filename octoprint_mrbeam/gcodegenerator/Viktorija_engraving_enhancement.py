@@ -74,11 +74,10 @@ plt.imshow(distances)
 # setting gcode
 # -------------------------------------------
 #%% scan 
-#%% scan 
 file = open(gcodefile,'w')
 image_copy = np.copy(image)
 #i,j=(first_row,first_col)
-i,j = (0,0)
+i,j = (first_row,first_col)
 count = 0;
 max_count = image_copy.size
 change_made = 0
@@ -115,17 +114,15 @@ gcode += "F1000 \n" # setting initial value to the laser
 gcode += "M3S0 \n" # set the laser on
 gcode += "G0" + "X" + str(first_row/5) + "Y" + str(first_col/5) + "Z0\n" 
 
-# starting the loop
-while ((sum(image_copy[image_copy<white_thresh])) > 0):
+size_square = 5
 
-#    count = count + 1
-#    if count > max_count:
-#        print("Ja pretera malku")
-#        break
+# starting the loop
+while (sum(image_copy[image_copy<white_thresh])) > 0:
+
 #    print(i,j)
 #    time.sleep(0.01)
     
-    # checking if i and j are out of boundaries 
+######################### check if (i,j) in boundaries ####################################
     if i >= i_max: # I was going down, but I reached the end, so I start going up
         i = i_max - 1
         direction_up_down = -1
@@ -137,12 +134,9 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
         i = i+1
     if j < 0:
         direction_left_right = 1
-        j = j+1
+        j = j+1    
         
-        #turn_laser_off = 0 if abs(i-i_last) > 1 or abs(j-j_last) > 1 else turn_laser_off
-    
-        
-    # if i and j are changed, give new commands to gcode     
+########################## if new (i,j) -> new commands to gcode ##########################
     if change_made:
         # for right gcode here will come: if image_copy[i,j] <= white_thresh:
         change_made = 0
@@ -151,16 +145,16 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
         x_gcode = "X"+str(i/5) if i != i_last else ""
         gcode += "G"+str(turn_laser_off)
         gcode += x_gcode + y_gcode
-        gcode += ("F" + str(get_feedrate(image_copy[i,j])) + "S" + str(get_intensity(image_copy[i,j]))) if j==j_last or i==i_last else ""
+        gcode += ("F" + str(get_feedrate(image_copy[i,j])) + "S" + str(get_intensity(image_copy[i,j]))) if (j==j_last or i==i_last) and remember == 1 else ""
         gcode += '\n'
         image_copy[i,j] = 1
         i_last = i
         j_last = j
         
     # find next pixel
-    #################################### moving left ----> right #####################
+####################################### moving left ----> right #########################
     if direction_left_right == 1: 
-        for factor in range (1,5):
+        for factor in range (1,size_square):
             if j+factor<=j_max:
                 if image_copy[i,j+factor] <= white_thresh:
                     j = j + factor
@@ -169,11 +163,10 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
                     end_reached = -1
     #                print ("move to the positive direction with factor: ", factor)
                     break
-            
         if change_made != 1:
-            for factor_up_down in range (0,5):
+            for factor_up_down in range (-1,size_square*(-1)-1,-1):
                 if change_made != 1:
-                    for factor in range (5,-6,-1):
+                    for factor in range (size_square,size_square*(-1)-1,-1):
                         if j+factor<=j_max and j+factor>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
                             if image_copy[i+factor_up_down,j+factor] <= white_thresh:
                                 i = i + factor_up_down
@@ -184,9 +177,9 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
                                 end_reached = -1
                                 break
             if change_made != 1:
-                for factor_up_down in range (-1,-6,-1):
+                for factor_up_down in range (1,size_square):
                     if change_made != 1:
-                        for factor in range (5,-6,-1):
+                        for factor in range (size_square,size_square*(-1)-1,-1):
                             if j+factor<=j_max and j+factor>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
                                 if image_copy[i+factor_up_down,j+factor] <= white_thresh:
                                     i = i + factor_up_down
@@ -196,9 +189,10 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
                                     turn_laser_off = 0
                                     end_reached = -1
                                     break
-    ############################# moving left <---- right ############################
+
+################################ moving left <---- right ###############################
     else: 
-        for factor in range (1,5):
+        for factor in range (1,size_square):
             if j-factor>=0:
                 if image_copy[i,j-factor] <= white_thresh:
                     j = j - factor
@@ -209,9 +203,11 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
     #                print ("move to the negative direction with factor: ", factor)
                     break
         if change_made != 1:
-            for factor_up_down in range (1,5):
-                if change_made != 1:
-                    for factor in range (-5,5):
+            for factor_up_down in range (-1,size_square*(-1)-1,-1):
+                if change_made == 1:
+                    break
+                else:
+                    for factor in range (size_square*(-1)-1,size_square):
                         if j+factor<=j_max and j+factor>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
                             if image_copy[i+factor_up_down,j+factor] <= white_thresh:
                                 i = i + factor_up_down
@@ -222,11 +218,9 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
                                 end_reached = -1
                                 break
             if change_made != 1:
-                for factor_up_down in range (-1,-6,-1):
-                    if change_made == 1:
-                        break
-                    else:
-                        for factor in range (-5,5):
+                for factor_up_down in range (1,size_square):
+                    if change_made != 1:
+                        for factor in range (size_square*(-1)-1,size_square):
                             if j+factor<=j_max and j+factor>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
                                 if image_copy[i+factor_up_down,j+factor] <= white_thresh:
                                     i = i + factor_up_down
@@ -238,10 +232,6 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
                                     break
     
 ###################### find a possible position that could have been skipped ####################
-#    if remember == 1 and (i_remember != i or j_remember != j): # TODO: some error might occur here
-#        print ("I already remember something, I don't need a new value")
-#        just_to_save_some_time = 1
-#    else:
     for j_next in range (1,max(j_max-j,j)):
         if j+j_next*direction_left_right < j_max and j+j_next*direction_left_right>=0:
             if image_copy[i,j+j_next*direction_left_right] <= white_thresh:
@@ -269,7 +259,6 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
                     #print ("future and current values", i_remember, j_remember, i, j)
                 break
 
-
     # if a new value is set to i or j continue                
     if change_made == 1:
         continue
@@ -288,14 +277,14 @@ while ((sum(image_copy[image_copy<white_thresh])) > 0):
     if end_reached == -1:
         i = i + 1 if i+1<i_max else 0
         direction_left_right = direction_left_right * (-1)
-        change_made = 0 # only for debugging
+        change_made = 0 
         turn_laser_off = 0
         end_reached = 1
         continue
 #        print ("I am at the end, the direction is: ", direction_left_right)
     else:
         direction_left_right = direction_left_right * (-1)
-        change_made = 0 # only for debugging
+        change_made = 0 
         turn_laser_off = 0
         end_reached = -1
 #        print ("I was once at the end, the direction is: ", direction_left_right)
