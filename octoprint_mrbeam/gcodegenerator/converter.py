@@ -13,7 +13,8 @@ import simplestyle
 import simpletransform
 import cubicsuperpath
 
-from img2gcode import ImageProcessor
+# from img2gcode import ImageProcessor
+from Viktorija_engraving_enhancement import ImageProcessor
 from svg_util import get_path_d, _add_ns, unittouu
 
 from lxml import etree
@@ -257,7 +258,7 @@ class Converter():
 					for colorKey in paths_by_color.keys():
 						if colorKey == 'none':
 							continue
-							
+
 						settings = self.colorParams.get(colorKey, {'intensity': -1, 'feedrate': -1, 'passes': 0, 'pierce_time': 0})
 						if(settings['feedrate'] == None or settings['feedrate'] == -1 or settings['intensity'] == None or settings['intensity'] <= 0):
 							self._log.info( "convert() skipping color %s, no valid settings %s." % (colorKey, settings))
