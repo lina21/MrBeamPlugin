@@ -25,7 +25,7 @@ import logging
 from PIL import Image
 from PIL import ImageEnhance
 import base64
-#import cStringIO
+import cStringIO
 import os.path
 import numpy as np
 from skimage import io
@@ -170,32 +170,31 @@ class ImageProcessor():
 #		last_y = -1
 
 		image_copy = np.copy(img)
+		i,j = get_closest_distance(img, white_thresh)
 
 		#------------------- set variables ----------------------
 		white_thresh = 0.9
 		count = 0;
 		max_count = image_copy.size
 		change_made = 0
-		i_remember = first_row
-		j_remember = first_col
+		i_remember = i
+		j_remember = j
 		i_last = 0
 		j_last = 0
 		direction_remember = 1
 		remember = 0
 		direction_left_right = 1 #direction_left_right = 1 == left ----> right
 								 #direction_left_right = -1 == left <---- right 
-		turn_laser_off = 0 # turn_laser_off = 1 == we jump, so we need to turn the laser off
-						   #turn_laser_off = 0 == we don't jump, so the laser should stay on
-		end_reached = -1 # 1 = end reached ; -1 = end not reached
-		size_square = 5 # maybe this value should be changed
+		turn_laser_off = 0 		 # turn_laser_off = 1 == we jump, so we need to turn the laser off
+								 #turn_laser_off = 0 == we don't jump, so the laser should stay on
+		end_reached = -1 		 # 1 = end reached ; -1 = end not reached
+		size_square = 5 		 # maybe this value should be changed
 		#----------------- set variables done -------------------
-
-		i,j = get_closest_distance(img, white_thresh)
 		
 		self._append_gcode(self.get_settings_as_comment(x,y,w,h, file_id))
 		self._append_gcode('F' + str(self.feedrate_white) + '\n') # set an initial feedrate
 		self._append_gcode('M3S0\n') # enable laser
-		self._append_gcode("G0" + "X" + str(first_row) + "Y" + str(first_col) + "Z0\n")
+		self._append_gcode("G0" + "X" + str(i) + "Y" + str(j) + "Z0\n")
 
 		# iteration enhanced
 		while (sum(image_copy[image_copy<white_thresh])) > 0:
@@ -215,11 +214,11 @@ class ImageProcessor():
 			if change_made:
 				change_made = 0
 				# now setting the gcode parameters 
-				y_gcode = "Y"+str(j/5) if j != j_last else ""
-				x_gcode = "X"+str(i/5) if i != i_last else ""
+				y_gcode = "Y"+str(j) if j != j_last else ""
+				x_gcode = "X"+str(i) if i != i_last else ""
 				gcode = "G"+str(turn_laser_off)
 				gcode += x_gcode + y_gcode
-				gcode += ("F" + str(get_feedrate(image_copy[i,j])) + "S" + str(get_intensity(image_copy[i,j]))) if (j==j_last or i==i_last) and remember == 1 else ""
+				gcode += ("F" + str(self.get_feedrate(image_copy[i,j])) + "S" + str(self.get_intensity(image_copy[i,j]))) if (j==j_last or i==i_last) and remember == 1 else ""
 				gcode += '\n'
 				self._append_gcode(gcode)
 				image_copy[i,j] = 1
