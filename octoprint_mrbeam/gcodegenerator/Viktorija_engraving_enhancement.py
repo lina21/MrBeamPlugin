@@ -173,7 +173,7 @@ class ImageProcessor():
 		i,j = get_closest_distance(img, white_thresh)
 
 		#------------------- set variables ----------------------
-		white_thresh = 0.9
+		white_thresh = self.intensity_white
 		count = 0;
 		max_count = image_copy.size
 		change_made = 0
@@ -197,114 +197,97 @@ class ImageProcessor():
 		self._append_gcode("G0" + "X" + str(i) + "Y" + str(j) + "Z0\n")
 
 		# iteration enhanced
-		while (sum(image_copy[image_copy<white_thresh])) > 0:
-		################# check if (i,j) in boundaries, just in case##################
-			if i >= i_max: 
-				i = i_max - 1
-			if i < 0:
-				i = 1     
+		while (image_copy[image_copy<white_thresh].size) > 0:
+
+		#    print(i,j)
+		#    time.sleep(0.01)
+			
+		######################### check if (i,j) in boundaries ####################################
+			if i >= i_max or i < 0: 
+				i = 1       
 			if j >= j_max:
 				direction_left_right = -1
 				i = i+1
 			if j < 0:
 				direction_left_right = 1
 				j = j+1    
-				
 		########################## if new (i,j) -> new commands to gcode ##########################
 			if change_made:
 				change_made = 0
-				# now setting the gcode parameters 
-				y_gcode = "Y"+str(j) if j != j_last else ""
-				x_gcode = "X"+str(i) if i != i_last else ""
-				gcode = "G"+str(turn_laser_off)
+				y_gcode = "Y"+str(j) if y_gcode != "Y"+str(j) else ""
+				x_gcode = "X"+str(i) if x_gcode != "X"+str(i) else ""
+				gcode += "G"+str(turn_laser_off)
 				gcode += x_gcode + y_gcode
-				gcode += ("F" + str(self.get_feedrate(image_copy[i,j])) + "S" + str(self.get_intensity(image_copy[i,j]))) if (j==j_last or i==i_last) and remember == 1 else ""
-				gcode += '\n'
-				self._append_gcode(gcode)
+				gcode += ("F{feedrate}S{intensity}".format(feedrate=get_feedrate(image_copy[i,j]), intensity=get_intensity(image_copy[i,j]))) if (turn_laser_off==1) else ""
+				gcode = gcode + '\n'
+			   # print(i,j,'engrave here', image_copy[i,j])
 				image_copy[i,j] = 1
+			   # print('left with:', sum(image_copy[image_copy<white_thresh]))
 				i_last = i
 				j_last = j
-				
-			# find next pixel
-		####################################### moving left ----> right #########################
-			if direction_left_right == 1: 
-				for factor in range (1,size_square):
-					if j+factor<=j_max:
-						if image_copy[i,j+factor] <= white_thresh:
-							j = j + factor
+				turn_laser_off = 0
+				same_intensity = 0
+				last_brightness = 0
+		################################## find next pixel in the square 2*size_square #########################
+			turn_laser_off = 1
+			for factor in range (1,max(j_max-j,j)): #find in the line
+				j_last = j
+			   # print(i,j,'in for this is the value')
+				if j+direction_left_right<j_max and j+direction_left_right>=0:
+					brightness = image_copy[i,j+direction_left_right]
+					if brightness <= white_thresh:
+						if change_made == 0 or last_brightness == brightness:
+							j = j + direction_left_right
+							last_brightness = image_copy[i,j]
+							image_copy[i,j] = 1
 							change_made = 1
-							turn_laser_off = 1
-							end_reached = -1
+							same_intensity = 1
+							#print(i,j,'I change the value of this')
+							continue
+						elif change_made == 1 and last_brightness != brightness:
 							break
+					else:
+						if same_intensity == 1 and change_made == 1:
+							same_intensity = 0
+							break 
+						if change_made == 0:
+							turn_laser_off = 0
+							if factor > size_square:
+								break
+				else:
+					break
+			if change_made != 1: #find in the square
+				for factor_up_down in range (-1,size_square*(-1)-1,-1):
+					if change_made == 1:
+						break
+					else:
+						for factor in range (size_square,size_square*(-1)-1,-1):
+							if j+factor*direction_left_right<j_max and j+factor*direction_left_right>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
+								if image_copy[i+factor_up_down,j+factor*direction_left_right] <= white_thresh:
+									i = i + factor_up_down
+									j = j + factor*direction_left_right
+									direction_left_right *= -1 
+									change_made = 1
+									turn_laser_off = 0
+									break
 				if change_made != 1:
-					for factor_up_down in range (-1,size_square*(-1)-1,-1):
-						if change_made != 1:
-							for factor in range (size_square,size_square*(-1)-1,-1):
-								if j+factor<=j_max and j+factor>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
-									if image_copy[i+factor_up_down,j+factor] <= white_thresh:
-										i = i + factor_up_down
-										j = j + factor
-										direction_left_right *= -1 
-										change_made = 1
-										turn_laser_off = 0
-										end_reached = -1
-										break
-					if change_made != 1:
-						for factor_up_down in range (1,size_square):
-							if change_made != 1:
-								for factor in range (size_square,size_square*(-1)-1,-1):
-									if j+factor<=j_max and j+factor>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
-										if image_copy[i+factor_up_down,j+factor] <= white_thresh:
-											i = i + factor_up_down
-											j = j + factor
-											direction_left_right *= -1 
-											change_made = 1
-											turn_laser_off = 0
-											end_reached = -1
-											break
-
-		################################ moving left <---- right ###############################
-			else: 
-				for factor in range (1,size_square):
-					if j-factor>=0:
-						if image_copy[i,j-factor] <= white_thresh:
-							j = j - factor
-							change_made = 1
-							turn_laser_off = 1
-							end_reached = -1
-							break
-				if change_made != 1:
-					for factor_up_down in range (-1,size_square*(-1)-1,-1):
+					for factor_up_down in range (1,size_square):
 						if change_made == 1:
 							break
 						else:
-							for factor in range (size_square*(-1)-1,size_square):
-								if j+factor<=j_max and j+factor>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
-									if image_copy[i+factor_up_down,j+factor] <= white_thresh:
+							for factor in range (size_square,size_square*(-1)-1,-1):
+								if j+factor*direction_left_right<=j_max and j+factor*direction_left_right>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
+									if image_copy[i+factor_up_down,j+factor*direction_left_right] <= white_thresh:
 										i = i + factor_up_down
-										j = j + factor
+										j = j + factor*direction_left_right
 										direction_left_right *= -1 
 										change_made = 1
 										turn_laser_off = 0
-										end_reached = -1
 										break
-					if change_made != 1:
-						for factor_up_down in range (1,size_square):
-							if change_made != 1:
-								for factor in range (size_square*(-1)-1,size_square):
-									if j+factor<=j_max and j+factor>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
-										if image_copy[i+factor_up_down,j+factor] <= white_thresh:
-											i = i + factor_up_down
-											j = j + factor
-											direction_left_right *= -1 
-											change_made = 1
-											turn_laser_off = 0
-											end_reached = -1
-											break
 			
 		###################### find a possible position that could have been skipped ####################
-			for j_next in range (1,max(j_max-j,j)):
-				if j+j_next*direction_left_right < j_max and j+j_next*direction_left_right>=0:
+			for j_next in range (1,max(j,j_max-j)):
+				if j+j_next*direction_left_right < j_max and j+j_next*direction_left_right>=0 :
 					if image_copy[i,j+j_next*direction_left_right] <= white_thresh:
 						if change_made == 0:
 							j = j + j_next*direction_left_right
@@ -315,6 +298,7 @@ class ImageProcessor():
 							remember = 1
 							direction_remember = direction_left_right
 						break
+			for j_next in range (1,max(j,j_max-j)):
 				if j-j_next*direction_left_right < j_max and j-j_next*direction_left_right>=0:
 					if image_copy[i,j-j_next*direction_left_right] <= white_thresh:
 						if change_made == 0:
@@ -326,33 +310,20 @@ class ImageProcessor():
 							i_remember = i
 							remember = 1
 							direction_remember = direction_left_right
-						break
-
-			# if a new value is set to i or j continue                
+						break  
+						
 			if change_made == 1:
 				continue
-			# if there is no new pixel in close surrounding, move to the pixels that are remembered
 			if remember == 1:
 				i = i_remember
 				j = j_remember
 				turn_laser_off = 0
 				remember = 0
-				end_reached = -1
 				direction_left_right = direction_remember 
 				continue
-			
-			if end_reached == -1:
-				i = i + 1 if i+1<i_max else 0
-				direction_left_right = direction_left_right * (-1)
-				change_made = 0 
-				turn_laser_off = 0
-				end_reached = 1
-				continue
-			else:
-				direction_left_right = direction_left_right * (-1)
-				change_made = 0 
-				turn_laser_off = 0
-				end_reached = -1
+			i = i + 1 if i+1<i_max else 0
+			print ('arrived here', i,j)
+			turn_laser_off = 0
 	
 		
 		# ----------------------------- O L D ---------------------------------------------
