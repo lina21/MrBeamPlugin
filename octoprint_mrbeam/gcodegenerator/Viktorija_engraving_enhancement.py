@@ -31,7 +31,7 @@ import numpy as np
 from skimage import io
 #%%
 class ImageProcessor():
-
+SIZE_DISTANCE = 5 		 # maybe this value should be changed
 	def __init__( self,
 	              output_filehandle = None,
 	              contrast = 1.0,
@@ -64,7 +64,20 @@ class ImageProcessor():
 		self.contrastFactor = float(contrast)
 		self.sharpeningFactor = float(sharpening)
 		self.dithering = (dithering == True or dithering == "True")
-
+		
+		self.self.white_thresh = self.intensity_white*0.9
+		self.change_made = 0
+		self.i_last = 0
+		self.j_last = 0
+		self.direction_remember = 1
+		self.remember = 0
+		self.direction_left_right = 1 	#self.direction_left_right = 1 == left ----> right
+										#self.direction_left_right = -1 == left <---- right 
+		self.turn_laser_off = 0 		# self.turn_laser_off = 1 == we jump, so we need to turn the laser off
+										#self.turn_laser_off = 0 == we don't jump, so the laser should stay on
+		self.same_intensity = 0
+		self.last_brightness = 0
+		
 		self.debugPreprocessing = False
 		self.debugPreprocessing = True
 
@@ -162,220 +175,181 @@ class ImageProcessor():
 		return img
 
 	def generate_gcode(self, img, x,y,w,h, file_id):
-		settings_comment = self.get_settings_as_comment(x,y,w,h, "")
-		self._log.info("img2gcode conversion started:\n%s" % settings_comment)
-#		x += self.beam/2.0
-#		y -= self.beam/2.0
-#		direction_positive = True
-#		last_y = -1
-
-		image_copy = np.copy(img)
-		i,j = get_closest_distance(img, white_thresh)
-
-		#------------------- set variables ----------------------
-		white_thresh = self.intensity_white
-		count = 0;
-		max_count = image_copy.size
-		change_made = 0
-		i_remember = i
-		j_remember = j
-		i_last = 0
-		j_last = 0
-		direction_remember = 1
-		remember = 0
-		direction_left_right = 1 #direction_left_right = 1 == left ----> right
-								 #direction_left_right = -1 == left <---- right 
-		turn_laser_off = 0 		 # turn_laser_off = 1 == we jump, so we need to turn the laser off
-								 #turn_laser_off = 0 == we don't jump, so the laser should stay on
-		end_reached = -1 		 # 1 = end reached ; -1 = end not reached
-		size_square = 5 		 # maybe this value should be changed
-		#----------------- set variables done -------------------
+		self.image_copy = img.load()
 		
-		self._append_gcode(self.get_settings_as_comment(x,y,w,h, file_id))
-		self._append_gcode('F' + str(self.feedrate_white) + '\n') # set an initial feedrate
-		self._append_gcode('M3S0\n') # enable laser
-		self._append_gcode("G0" + "X" + str(i) + "Y" + str(j) + "Z0\n")
-
-		# iteration enhanced
-		while (image_copy[image_copy<white_thresh].size) > 0:
-
-		#    print(i,j)
-		#    time.sleep(0.01)
-			
-		######################### check if (i,j) in boundaries ####################################
-			if i >= i_max or i < 0: 
-				i = 1       
-			if j >= j_max:
-				direction_left_right = -1
-				i = i+1
-			if j < 0:
-				direction_left_right = 1
-				j = j+1    
-		########################## if new (i,j) -> new commands to gcode ##########################
-			if change_made:
-				change_made = 0
-				y_gcode = "Y"+str(j) if y_gcode != "Y"+str(j) else ""
-				x_gcode = "X"+str(i) if x_gcode != "X"+str(i) else ""
-				gcode += "G"+str(turn_laser_off)
-				gcode += x_gcode + y_gcode
-				gcode += ("F{feedrate}S{intensity}".format(feedrate=get_feedrate(image_copy[i,j]), intensity=get_intensity(image_copy[i,j]))) if (turn_laser_off==1) else ""
-				gcode = gcode + '\n'
-			   # print(i,j,'engrave here', image_copy[i,j])
-				image_copy[i,j] = 1
-			   # print('left with:', sum(image_copy[image_copy<white_thresh]))
-				i_last = i
-				j_last = j
-				turn_laser_off = 0
-				same_intensity = 0
-				last_brightness = 0
-		################################## find next pixel in the square 2*size_square #########################
-			turn_laser_off = 1
-			for factor in range (1,max(j_max-j,j)): #find in the line
-				j_last = j
-			   # print(i,j,'in for this is the value')
-				if j+direction_left_right<j_max and j+direction_left_right>=0:
-					brightness = image_copy[i,j+direction_left_right]
-					if brightness <= white_thresh:
-						if change_made == 0 or last_brightness == brightness:
-							j = j + direction_left_right
-							last_brightness = image_copy[i,j]
-							image_copy[i,j] = 1
-							change_made = 1
-							same_intensity = 1
-							#print(i,j,'I change the value of this')
-							continue
-						elif change_made == 1 and last_brightness != brightness:
-							break
-					else:
-						if same_intensity == 1 and change_made == 1:
-							same_intensity = 0
-							break 
-						if change_made == 0:
-							turn_laser_off = 0
-							if factor > size_square:
-								break
-				else:
-					break
-			if change_made != 1: #find in the square
-				for factor_up_down in range (-1,size_square*(-1)-1,-1):
-					if change_made == 1:
-						break
-					else:
-						for factor in range (size_square,size_square*(-1)-1,-1):
-							if j+factor*direction_left_right<j_max and j+factor*direction_left_right>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
-								if image_copy[i+factor_up_down,j+factor*direction_left_right] <= white_thresh:
-									i = i + factor_up_down
-									j = j + factor*direction_left_right
-									direction_left_right *= -1 
-									change_made = 1
-									turn_laser_off = 0
-									break
-				if change_made != 1:
-					for factor_up_down in range (1,size_square):
-						if change_made == 1:
-							break
-						else:
-							for factor in range (size_square,size_square*(-1)-1,-1):
-								if j+factor*direction_left_right<=j_max and j+factor*direction_left_right>=0 and i+factor_up_down<i_max and i+factor_up_down>0:
-									if image_copy[i+factor_up_down,j+factor*direction_left_right] <= white_thresh:
-										i = i + factor_up_down
-										j = j + factor*direction_left_right
-										direction_left_right *= -1 
-										change_made = 1
-										turn_laser_off = 0
-										break
-			
-		###################### find a possible position that could have been skipped ####################
-			for j_next in range (1,max(j,j_max-j)):
-				if j+j_next*direction_left_right < j_max and j+j_next*direction_left_right>=0 :
-					if image_copy[i,j+j_next*direction_left_right] <= white_thresh:
-						if change_made == 0:
-							j = j + j_next*direction_left_right
-							change_made = 1
-						else:
-							j_remember = j + j_next*direction_left_right
-							i_remember = i
-							remember = 1
-							direction_remember = direction_left_right
-						break
-			for j_next in range (1,max(j,j_max-j)):
-				if j-j_next*direction_left_right < j_max and j-j_next*direction_left_right>=0:
-					if image_copy[i,j-j_next*direction_left_right] <= white_thresh:
-						if change_made == 0:
-							j = j - j_next*direction_left_right
-							change_made = 1
-							direction_left_right = direction_left_right * (-1) 
-						else:
-							j_remember = j - j_next*direction_left_right
-							i_remember = i
-							remember = 1
-							direction_remember = direction_left_right
-						break  
-						
-			if change_made == 1:
-				continue
-			if remember == 1:
-				i = i_remember
-				j = j_remember
-				turn_laser_off = 0
-				remember = 0
-				direction_left_right = direction_remember 
-				continue
-			i = i + 1 if i+1<i_max else 0
-			print ('arrived here', i,j)
-			turn_laser_off = 0
-	
+		self.set_initial_parameters(x,y,w,h, file_id)
 		
-		# ----------------------------- O L D ---------------------------------------------
-		# pix = img.load()
-		# for row in range(height-1,-1,-1):
-			# row_pos_y = y + (height - row) * self.beam # inverse y-coordinate as images have 0x0 at left top, mr beam at left bottom
+		while (self.image_copy[self.image_copy<self.white_thresh].size) > 0:
+		
+			self.check_if_pixel_in_boundaries()
+			
+			if self.change_made:
+				self.set_everything_for_engraving()
+		
+			self.search_for_next_pixel_in_the_same_row()
 
-			# # back and forth
-			# pixelrange = range(0, width) if(direction_positive) else range(width-1, -1, -1)
-
-			# lastBrightness = self.ignore_brighter_than + 1
-			# for i in pixelrange:
-				# px = pix[i, row]
-				# #brightness = self.get_alpha_composition(px)
-				# brightness = px
-				# if(brightness != lastBrightness ):
-					# if(i != pixelrange[0]): # don't move after new line
-						# xpos = x + self.beam * (i-1 if (direction_positive) else (i)) # calculate position; backward lines need to be shifted by +1 beam diameter
-						# self._append_gcode(self.get_gcode_for_equal_pixels(lastBrightness, xpos, row_pos_y, last_y))
-						# last_y = row_pos_y
-				# else:
-					# pass # combine equal intensity values to one move
-
-				# lastBrightness = brightness
-
-			# if(not self._ignore_pixel_brightness(brightness) and self.get_intensity(brightness) > 0): # finish non-white line
-				# end_of_line = x + pixelrange[-1] * self.beam
-				# self._append_gcode(self.get_gcode_for_equal_pixels(brightness, end_of_line, row_pos_y, last_y))
-				# last_y = row_pos_y
-
-			# # flip direction after each line to go back and forth
-			# direction_positive = not direction_positive
-
+			if self.change_made != 1: #if there is no pixel in the row check in the square
+				self.search_for_next_pixel_in_the_square()
+			
+			self.find_next_pixel_to_remember()
+			
+			if self.change_made == 1:
+				continue
+			if self.remember == 1:
+				self.set_next_pixel_to_the_last_remembered()
+				continue
+			self.i = self.i + 1 if self.i+1<self.i_max else 0
+			# print ('arrived here', self.i,self.j)
+			self.turn_laser_off = 0
+			
 		self._append_gcode(";EndImage\nM5\n") # important for gcode preview!
 		return self._output_gcode
 		
-	def get_closest_distance(self,image, white_thresh)
+	def set_initial_parameters(self,x,y,w,h, file_id):
+		settings_comment = self.get_settings_as_comment(x,y,w,h, "")
+		self._log.info("img2gcode conversion started:\n%s" % settings_comment)
+		self.i,self.j = self.get_closest_distance(self.image_copy, self.white_thresh)
+		self.i_remember = self.i
+		self.j_remember = self.j
+		self._append_gcode(self.get_settings_as_comment(x,y,w,h, file_id))
+		self._append_gcode('F' + str(self.feedrate_white) + '\n') # set an initial feedrate
+		self._append_gcode('M3S0\n') # enable laser
+		self._append_gcode("G0" + "X" + str(self.i) + "Y" + str(self.j) + "Z0\n")	
+		
+	def check_if_pixel_in_boundaries(self):
+		if self.i >= self.i_max or self.i < 0: 
+			self.i = 1       
+		if self.j >= self.j_max:
+			self.direction_left_right = -1
+			self.i = self.i+1
+		if self.j < 0:
+			self.direction_left_right = 1
+			self.j = self.j+1    
+		return
+		
+	def get_closest_distance(self,image, self.white_thresh):
 		starting_row = 0
 		starting_col = 0
 		first_row = 0
 		first_col = 0
 		distances = np.zeros_like(image)
-		i_max = image.shape[0]
-		j_max = image.shape[1]
+		self.i_max = image.shape[0]
+		self.j_max = image.shape[1]
 		for i in range(image.shape[0]):
 			for j in range(image.shape[1]):
-				if image[i,j] <= white_thresh:
+				if image[i,j] <= self.white_thresh:
 					distances[i,j] = weight_distance(starting_row,i,starting_col,j) 
 				if distances[i,j] < min_dist:
 					first_row,first_col = (i,j)
 		return first_row,first_col
 
+	def search_for_next_pixel_in_the_same_row(self):
+		self.turn_laser_off = 1
+		for factor in range (1,max(self.j_max-self.j,self.j)): #find in the line
+			self.j_last = self.j
+		   # print(self.i,self.j,'in for this is the value')
+			if self.j+self.direction_left_right<self.j_max and self.j+self.direction_left_right>=0:
+				brightness = self.image_copy[self.i,self.j+self.direction_left_right]
+				if brightness <= self.white_thresh:
+					if self.change_made == 0 or self.last_brightness == brightness:
+						self.j = self.j + self.direction_left_right
+						self.last_brightness = self.image_copy[self.i,self.j]
+						self.image_copy[self.i,self.j] = 1
+						self.change_made = 1
+						self.same_intensity = 1
+						#print(self.i,self.j,'I change the value of this')
+						continue
+					elif self.change_made == 1 and self.last_brightness != brightness:
+						return
+				else:
+					if self.same_intensity == 1 and self.change_made == 1:
+						self.same_intensity = 0
+						return 
+					if self.change_made == 0:
+						self.turn_laser_off = 0
+						if factor > SIZE_DISTANCE:
+							return
+			else:
+				return	
+		return
+		
+	def search_for_next_pixel_in_the_square(self):
+		for factor_up_down in range (-1,SIZE_DISTANCE*(-1)-1,-1):
+			for factor in range (SIZE_DISTANCE,SIZE_DISTANCE*(-1)-1,-1):
+				if self.j+factor*self.direction_left_right<self.j_max and self.j+factor*self.direction_left_right>=0 and self.i+factor_up_down<self.i_max and self.i+factor_up_down>0:
+					if self.image_copy[self.i+factor_up_down,self.j+factor*self.direction_left_right] <= self.white_thresh:
+						self.i = self.i + factor_up_down
+						self.j = self.j + factor*self.direction_left_right
+						self.direction_left_right *= -1 
+						self.change_made = 1
+						self.turn_laser_off = 0
+						return
+		for factor_up_down in range (1,SIZE_DISTANCE):
+			for factor in range (SIZE_DISTANCE,SIZE_DISTANCE*(-1)-1,-1):
+				if self.j+factor*self.direction_left_right<=self.j_max and self.j+factor*self.direction_left_right>=0 and self.i+factor_up_down<self.i_max and self.i+factor_up_down>0:
+					if self.image_copy[self.i+factor_up_down,self.j+factor*self.direction_left_right] <= self.white_thresh:
+						self.i = self.i + factor_up_down
+						self.j = self.j + factor*self.direction_left_right
+						self.direction_left_right *= -1 
+						self.change_made = 1
+						self.turn_laser_off = 0
+						return
+		return
+	
+	def find_next_pixel_to_remember(self):
+		for j_next in range (1,max(self.j,self.j_max-self.j)):
+			if self.j+j_next*self.direction_left_right < self.j_max and self.j+j_next*self.direction_left_right>=0 :
+				if self.image_copy[self.i,self.j+j_next*self.direction_left_right] <= self.white_thresh:
+					if self.change_made == 0:
+						self.j = self.j + j_next*self.direction_left_right
+						self.change_made = 1
+					else:
+						self.j_remember = self.j + j_next*self.direction_left_right
+						self.i_remember = self.i
+						self.remember = 1
+						self.direction_remember = self.direction_left_right
+					return
+		for j_next in range (1,max(self.j,self.j_max-self.j)):
+			if self.j-j_next*self.direction_left_right < self.j_max and self.j-j_next*self.direction_left_right>=0:
+				if self.image_copy[self.i,self.j-j_next*self.direction_left_right] <= self.white_thresh:
+					if self.change_made == 0:
+						self.j = self.j - j_next*self.direction_left_right
+						self.change_made = 1
+						self.direction_left_right = self.direction_left_right * (-1) 
+					else:
+						self.j_remember = self.j - j_next*self.direction_left_right
+						self.i_remember = self.i
+						self.remember = 1
+						self.direction_remember = self.direction_left_right
+					return
+		return
+	
+	def set_everything_for_engraving(self):
+		self.change_made = 0
+		y_gcode = "Y"+str(self.j) if y_gcode != "Y"+str(self.j) else ""
+		x_gcode = "X"+str(self.i) if x_gcode != "X"+str(self.i) else ""
+		gcode += "G"+str(self.turn_laser_off)
+		gcode += x_gcode + y_gcode
+		gcode += ("F{feedrate}S{intensity}".format(feedrate=get_feedrate(self.image_copy[self.i,self.j]), intensity=get_intensity(self.image_copy[self.i,self.j]))) if (self.turn_laser_off==1) else ""
+		gcode = gcode + '\n'
+		self._append_gcode(gcode)
+	   # print(self.i,self.j,'engrave here', self.image_copy[self.i,self.j])
+		self.image_copy[self.i,self.j] = 1
+	   # print('left with:', sum(self.image_copy[self.image_copy<self.white_thresh]))
+		self.i_last = self.i
+		self.j_last = self.j
+		self.turn_laser_off = 0
+		self.same_intensity = 0
+		self.last_brightness = 0	
+		return
+	
+	def set_next_pixel_to_the_last_remembered(self):
+		self.i = self.i_remember
+		self.j = self.j_remember
+		self.turn_laser_off = 0
+		self.remember = 0
+		self.direction_left_right = self.direction_remember 
+		return
 		
 	def _ignore_pixel_brightness(self, brightness):
 		if(self.is_inverted): # inverted engraving, e.g. anodized aluminum
