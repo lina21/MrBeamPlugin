@@ -235,8 +235,9 @@ class ImageProcessor():
 		self._append_gcode(self.get_settings_as_comment(x,y,w,h, file_id))
 		self._append_gcode('F' + str(self.feedrate_white) + '\n') # set an initial feedrate
 		self._append_gcode('M3S0\n') # enable laser
-		self._append_gcode("G0X{:.2f}Y{:.2f}\n".format(self._get_x_gcode_from_pixel(self.i,x), _get_y_gcode_from_pixel(self.j,h,y))
-
+		self._append_gcode("G0X{:.2f}Y{:.2f}\n".format(self._get_x_gcode_from_pixel(self.i,x), self._get_y_gcode_from_pixel(self.j,h,y)))
+		return
+	
 	def check_if_pixel_in_boundaries(self):
 		if self.i >= self.i_max or self.i < self.i_min:
 			self.i = self.i_min
