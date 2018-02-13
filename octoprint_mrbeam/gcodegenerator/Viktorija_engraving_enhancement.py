@@ -21,6 +21,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 """
 import optparse
+import time
 import logging
 from PIL import Image
 from PIL import ImageEnhance
@@ -234,7 +235,7 @@ class ImageProcessor():
 		self._append_gcode(self.get_settings_as_comment(x,y,w,h, file_id))
 		self._append_gcode('F' + str(self.feedrate_white) + '\n') # set an initial feedrate
 		self._append_gcode('M3S0\n') # enable laser
-		self._append_gcode("G0" + "X" + str(self.i) + "Y" + str(self.j) + "Z0\n")
+		self._append_gcode("G0X{:.2f}Y{:.2f}\n".format(self._get_x_gcode_from_pixel(self.i,x), _get_y_gcode_from_pixel(self.j,h,y))
 
 	def check_if_pixel_in_boundaries(self):
 		if self.i >= self.i_max or self.i < self.i_min:
