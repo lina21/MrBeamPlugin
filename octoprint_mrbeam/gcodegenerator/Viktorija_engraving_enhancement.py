@@ -256,17 +256,18 @@ class ImageProcessor():
 		min_dist = 5000
 		self.i_max, self.j_max = 0, 0
 		self.i_min, self.j_min = self.image_copy.shape
-		for i in range(self.i_max):
+		for i in range(self.image_copy.shape[0]):
 			#self._log.info("VIKTORIJA: in get_closest_distance() i: %s", i)
-			for j in range(self.j_max):
+			for j in range(self.image_copy.shape[1]):
 				if self.image_copy[i,j] <= self.WHITE_THRESHOLD:
+					self._log.info("VIKTORIJA: in get_closest_distance() i: %s, j: %s, pixel: %s", i, j, self.image_copy[i,j])
 					distances[i,j] = self.weight_distance(starting_row,i,starting_col,j)
 					self.i_min = i if self.i_min > i else self.i_min
 					self.j_min = j if self.j_min > j else self.j_min
 					self.i_max = i if self.i_max < i else self.i_max
 					self.j_max = j if self.j_max < j else self.j_max
 					if distances[i,j] < min_dist:
-						min_distance = distances[i,j]
+						min_dist = distances[i,j]
 						first_row,first_col = (i,j)
 		self._log.info("VIKTORIJA: get_closest_distance() first_row: %s,first_col: %s, i_min: %s, i_max: %s, j_min: %s, j_max: %s", first_row,first_col, self.i_min, self.i_max, self.j_min, self.j_max)
 		return first_row,first_col
