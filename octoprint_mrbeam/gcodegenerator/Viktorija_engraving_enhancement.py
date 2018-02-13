@@ -28,10 +28,8 @@ import base64
 import cStringIO
 import os.path
 import numpy as np
-from skimage import io
 #%%
 class ImageProcessor():
-SIZE_DISTANCE = 5 		 # maybe this value should be changed
 	def __init__( self,
 	              output_filehandle = None,
 	              contrast = 1.0,
@@ -65,7 +63,8 @@ SIZE_DISTANCE = 5 		 # maybe this value should be changed
 		self.sharpeningFactor = float(sharpening)
 		self.dithering = (dithering == True or dithering == "True")
 		
-		self.self.white_thresh = self.intensity_white*0.9
+		self.SIZE_DISTANCE = 10 		 # maybe this value should be changed
+		self.white_thresh = 240 # TODO: let's find a good val
 		self.change_made = 0
 		self.i_last = 0
 		self.j_last = 0
@@ -175,21 +174,27 @@ SIZE_DISTANCE = 5 		 # maybe this value should be changed
 		return img
 
 	def generate_gcode(self, img, x,y,w,h, file_id):
+		self._log.info("VIKTORIJA:	in generate_gcode")
 		self.image_copy = img.load()
+		self._log.info("VIKTORIJA:	image loaded")
 		
-		self.set_initial_parameters(x,y,w,h, file_id)
+		self.set_initial_parameters(img, x,y,w,h, file_id)
+		self._log.info("VIKTORIJA:	initial parametars set")
 		
-		while (self.image_copy[self.image_copy<self.white_thresh].size) > 0:
-		
+		self.to_engrave_left = img.size
+		self._log.info("VIKTORIJA:	starting the loop")
+		while self.to_engrave_left > 0:
+			self._log.info("VIKTORIJA:	in the loop. self.to_engrave_left: %s, self.change_made: %s", self.to_engrave_left, self.change_made)
 			self.check_if_pixel_in_boundaries()
 			
 			if self.change_made:
 				self.set_everything_for_engraving()
-		
+			
 			self.search_for_next_pixel_in_the_same_row()
 
 			if self.change_made != 1: #if there is no pixel in the row check in the square
 				self.search_for_next_pixel_in_the_square()
+				self._log.info("VIKTORIJA: in the loop, i:%s, j:%s", self.i, self.j)
 			
 			self.find_next_pixel_to_remember()
 			
@@ -205,10 +210,12 @@ SIZE_DISTANCE = 5 		 # maybe this value should be changed
 		self._append_gcode(";EndImage\nM5\n") # important for gcode preview!
 		return self._output_gcode
 		
-	def set_initial_parameters(self,x,y,w,h, file_id):
+	def set_initial_parameters(self,img, x,y,w,h, file_id):
+		self.i_max, self.j_max = img.size
 		settings_comment = self.get_settings_as_comment(x,y,w,h, "")
 		self._log.info("img2gcode conversion started:\n%s" % settings_comment)
-		self.i,self.j = self.get_closest_distance(self.image_copy, self.white_thresh)
+		self.i,self.j = self.get_closest_distance(img, self.white_thresh)
+		self._log.info("VIKTORIJA: set_initial_parameters() i:%s, j:%s", self.i, self.j)
 		self.i_remember = self.i
 		self.j_remember = self.j
 		self._append_gcode(self.get_settings_as_comment(x,y,w,h, file_id))
@@ -227,29 +234,35 @@ SIZE_DISTANCE = 5 		 # maybe this value should be changed
 			self.j = self.j+1    
 		return
 		
-	def get_closest_distance(self,image, self.white_thresh):
+	def get_closest_distance(self,img,white_thresh):
 		starting_row = 0
 		starting_col = 0
 		first_row = 0
 		first_col = 0
-		distances = np.zeros_like(image)
-		self.i_max = image.shape[0]
-		self.j_max = image.shape[1]
-		for i in range(image.shape[0]):
-			for j in range(image.shape[1]):
-				if image[i,j] <= self.white_thresh:
-					distances[i,j] = weight_distance(starting_row,i,starting_col,j) 
-				if distances[i,j] < min_dist:
-					first_row,first_col = (i,j)
+		distances = img.load()
+		min_dist = 5000
+		for i in range(self.i_max):
+			for j in range(self.j_max):
+				if self.image_copy[i,j] <= self.white_thresh:
+					distances[i,j] = self.weight_distance(starting_row,i,starting_col,j) 
+					if distances[i,j] < min_dist:
+						min_distance = distances[i,j]
+						first_row,first_col = (i,j)
+		self._log.info("VIKTORIJA: get_closest_distance() first_row: %s,first_col: %s", first_row,first_col)
 		return first_row,first_col
+		
+	def weight_distance (self,m1,m2,n1,n2):
+		return max(abs(m1-m2),abs(n1-n2))
 
 	def search_for_next_pixel_in_the_same_row(self):
+		self._log.info("VIKTORIJA:	search_for_next_pixel_in_the_same_row() self.i_max;%s, self.j_max:%s", self.i_max, self.j_max)
 		self.turn_laser_off = 1
 		for factor in range (1,max(self.j_max-self.j,self.j)): #find in the line
 			self.j_last = self.j
 		   # print(self.i,self.j,'in for this is the value')
 			if self.j+self.direction_left_right<self.j_max and self.j+self.direction_left_right>=0:
 				brightness = self.image_copy[self.i,self.j+self.direction_left_right]
+				self._log.info("VIKTORIJA: brightness: %s, white_thresh: %s", brightness, self.white_thresh)
 				if brightness <= self.white_thresh:
 					if self.change_made == 0 or self.last_brightness == brightness:
 						self.j = self.j + self.direction_left_right
@@ -260,22 +273,27 @@ SIZE_DISTANCE = 5 		 # maybe this value should be changed
 						#print(self.i,self.j,'I change the value of this')
 						continue
 					elif self.change_made == 1 and self.last_brightness != brightness:
+						self._log.info("VIKTORIJA: return from 1, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.i, self.j, self.turn_laser_off, self.change_made)
 						return
 				else:
 					if self.same_intensity == 1 and self.change_made == 1:
 						self.same_intensity = 0
+						self._log.info("VIKTORIJA: return from 2, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.i, self.j, self.turn_laser_off, self.change_made)
 						return 
 					if self.change_made == 0:
 						self.turn_laser_off = 0
-						if factor > SIZE_DISTANCE:
+						if factor > self.SIZE_DISTANCE:
+							self._log.info("VIKTORIJA: return from 3, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.i, self.j, self.turn_laser_off, self.change_made)
 							return
 			else:
-				return	
+				self._log.info("VIKTORIJA: return from 4, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.i, self.j, self.turn_laser_off, self.change_made)
+				return
+		self._log.info("VIKTORIJA: return from end, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.i, self.j, self.turn_laser_off, self.change_made)
 		return
 		
 	def search_for_next_pixel_in_the_square(self):
-		for factor_up_down in range (-1,SIZE_DISTANCE*(-1)-1,-1):
-			for factor in range (SIZE_DISTANCE,SIZE_DISTANCE*(-1)-1,-1):
+		for factor_up_down in range (-1,self.SIZE_DISTANCE*(-1)-1,-1):
+			for factor in range (self.SIZE_DISTANCE,self.SIZE_DISTANCE*(-1)-1,-1):
 				if self.j+factor*self.direction_left_right<self.j_max and self.j+factor*self.direction_left_right>=0 and self.i+factor_up_down<self.i_max and self.i+factor_up_down>0:
 					if self.image_copy[self.i+factor_up_down,self.j+factor*self.direction_left_right] <= self.white_thresh:
 						self.i = self.i + factor_up_down
@@ -284,9 +302,9 @@ SIZE_DISTANCE = 5 		 # maybe this value should be changed
 						self.change_made = 1
 						self.turn_laser_off = 0
 						return
-		for factor_up_down in range (1,SIZE_DISTANCE):
-			for factor in range (SIZE_DISTANCE,SIZE_DISTANCE*(-1)-1,-1):
-				if self.j+factor*self.direction_left_right<=self.j_max and self.j+factor*self.direction_left_right>=0 and self.i+factor_up_down<self.i_max and self.i+factor_up_down>0:
+		for factor_up_down in range (1,self.SIZE_DISTANCE):
+			for factor in range (self.SIZE_DISTANCE,self.SIZE_DISTANCE*(-1)-1,-1):
+				if self.j+factor*self.direction_left_right<self.j_max and self.j+factor*self.direction_left_right>=0 and self.i+factor_up_down<self.i_max and self.i+factor_up_down>0:
 					if self.image_copy[self.i+factor_up_down,self.j+factor*self.direction_left_right] <= self.white_thresh:
 						self.i = self.i + factor_up_down
 						self.j = self.j + factor*self.direction_left_right
@@ -341,6 +359,8 @@ SIZE_DISTANCE = 5 		 # maybe this value should be changed
 		self.turn_laser_off = 0
 		self.same_intensity = 0
 		self.last_brightness = 0	
+		self.to_engrave_left = self.image_copy[self.image_copy<self.white_thresh]
+		self._log.info("VIKTORIJA:	to engrave pixels left:\n%d" % self.to_engrave_left)
 		return
 	
 	def set_next_pixel_to_the_last_remembered(self):
