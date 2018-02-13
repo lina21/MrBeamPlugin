@@ -76,6 +76,8 @@ class ImageProcessor():
 										#self.turn_laser_off = 0 == we don't jump, so the laser should stay on
 		self.same_intensity = 0
 		self.last_brightness = 0
+		self.x_gcode = ""
+		self.y_gcode = ""
 
 		self.debugPreprocessing = False
 		self.debugPreprocessing = True
@@ -174,48 +176,58 @@ class ImageProcessor():
 		return img
 
 	def generate_gcode(self, img, x,y,w,h, file_id):
+		self._log.info('VIKTORIJA: generate_gcode() params: img:%s, x:%s, y:%s y as int:%s, w:%s, h:%s', img, x,y,int(y),w,h)
+		
 		self._log.info("VIKTORIJA:	in generate_gcode, img type: %s", type(img))
-		self.image_copy = np.array(img.load())
-		self._log.info("VIKTORIJA:	image loaded, image_copy: %s ", type(self.image_copy))
-
-		self.set_initial_parameters(img, x,y,w,h, file_id)
+		self.image_copy = np.array(img) # TODO
+		self._log.info("VIKTORIJA:	image loaded, image_copy: %s , shape: %s, size: %s", type(self.image_copy), self.image_copy.shape, self.image_copy.size)
+		
+		self.set_initial_parameters(x,y,w,h, file_id)
 		self._log.info("VIKTORIJA:	initial parametars set")
 
 		# self.to_engrave_left = img.size
 
 		self._log.info("VIKTORIJA:	starting the loop")
+		
 		while self.image_copy[self.image_copy<self.WHITE_THRESHOLD].size > 0:
-			self._log.info("VIKTORIJA:	in the loop. self.to_engrave_left: %s, self.change_made: %s", self.to_engrave_left, self.change_made)
+			self._log.info("VIKTORIJA: ************************************************************")
+			self._log.info("VIKTORIJA: TOP OF LOOP. i: %s, j: %s, left: %s", self.i, self.j, self.image_copy[self.image_copy<self.WHITE_THRESHOLD].size )
+			self._log.info("VIKTORIJA: ************************************************************")
 			self.check_if_pixel_in_boundaries()
 
 			if self.change_made:
-				self.set_everything_for_engraving()
+				self.set_everything_for_engraving(x,y,w,h)
 
 			self.search_for_next_pixel_in_the_same_row()
 
 			if self.change_made != 1: #if there is no pixel in the row check in the square
 				self.search_for_next_pixel_in_the_square()
-				self._log.info("VIKTORIJA: in the loop, i:%s, j:%s", self.i, self.j)
 
 			self.find_next_pixel_to_remember()
 
 			if self.change_made == 1:
+				self._log.info("VIKTORIJA: ----------------------------------------------")
+				self._log.info("VIKTORIJA: in change_made == 1, i:%s, j:%s", self.i, self.j)
 				continue
+				
 			if self.remember == 1:
+				self._log.info("VIKTORIJA: ----------------------------------------------")
+				self._log.info("VIKTORIJA: in remember == 1, i:%s, j:%s", self.i_remember, self.j_remember)
 				self.set_next_pixel_to_the_last_remembered()
 				continue
+			
 			self.i = self.i + 1 if self.i+1<self.i_max else 0
-			# print ('arrived here', self.i,self.j)
+			self._log.info("VIKTORIJA: reached the end")
 			self.turn_laser_off = 0
 
 		self._append_gcode(";EndImage\nM5\n") # important for gcode preview!
+		self._log.info("VIKTORIJA:  FINISHED!!")
 		return self._output_gcode
 
-	def set_initial_parameters(self,img, x,y,w,h, file_id):
-		self.i_max, self.j_max = img.size
+	def set_initial_parameters(self,x,y,w,h, file_id):
 		settings_comment = self.get_settings_as_comment(x,y,w,h, "")
 		self._log.info("img2gcode conversion started:\n%s" % settings_comment)
-		self.i,self.j = self.get_closest_distance(img, self.WHITE_THRESHOLD)
+		self.i,self.j = self.get_closest_distance()
 		self._log.info("VIKTORIJA: set_initial_parameters() i:%s, j:%s", self.i, self.j)
 		self.i_remember = self.i
 		self.j_remember = self.j
@@ -225,50 +237,57 @@ class ImageProcessor():
 		self._append_gcode("G0" + "X" + str(self.i) + "Y" + str(self.j) + "Z0\n")
 
 	def check_if_pixel_in_boundaries(self):
-		if self.i >= self.i_max or self.i < 0:
-			self.i = 1
+		if self.i >= self.i_max or self.i < self.i_min:
+			self.i = self.i_min
 		if self.j >= self.j_max:
 			self.direction_left_right = -1
 			self.i = self.i+1
-		if self.j < 0:
+		if self.j < self.j_min:
 			self.direction_left_right = 1
 			self.j = self.j+1
 		return
 
-	def get_closest_distance(self,img,white_thresh):
+	def get_closest_distance(self):
 		starting_row = 0
 		starting_col = 0
 		first_row = 0
 		first_col = 0
-		distances = img.load()
+		distances = np.zeros_like(self.image_copy)
 		min_dist = 5000
+		self.i_max, self.j_max = 0, 0
+		self.i_min, self.j_min = self.image_copy.shape
 		for i in range(self.i_max):
+			#self._log.info("VIKTORIJA: in get_closest_distance() i: %s", i)
 			for j in range(self.j_max):
 				if self.image_copy[i,j] <= self.WHITE_THRESHOLD:
 					distances[i,j] = self.weight_distance(starting_row,i,starting_col,j)
+					self.i_min = i if self.i_min > i else self.i_min
+					self.j_min = j if self.j_min > j else self.j_min
+					self.i_max = i if self.i_max < i else self.i_max
+					self.j_max = j if self.j_max < j else self.j_max
 					if distances[i,j] < min_dist:
 						min_distance = distances[i,j]
 						first_row,first_col = (i,j)
-		self._log.info("VIKTORIJA: get_closest_distance() first_row: %s,first_col: %s", first_row,first_col)
+		self._log.info("VIKTORIJA: get_closest_distance() first_row: %s,first_col: %s, i_min: %s, i_max: %s, j_min: %s, j_max: %s", first_row,first_col, self.i_min, self.i_max, self.j_min, self.j_max)
 		return first_row,first_col
 
 	def weight_distance (self,m1,m2,n1,n2):
 		return max(abs(m1-m2),abs(n1-n2))
 
 	def search_for_next_pixel_in_the_same_row(self):
-		self._log.info("VIKTORIJA:	search_for_next_pixel_in_the_same_row() self.i_max;%s, self.j_max:%s", self.i_max, self.j_max)
+		self._log.info("VIKTORIJA: ***ROW***")
 		self.turn_laser_off = 1
 		for factor in range (1,max(self.j_max-self.j,self.j)): #find in the line
 			self.j_last = self.j
 		   # print(self.i,self.j,'in for this is the value')
 			if self.j+self.direction_left_right<self.j_max and self.j+self.direction_left_right>=0:
 				brightness = self.image_copy[self.i,self.j+self.direction_left_right]
-				self._log.info("VIKTORIJA: brightness: %s, white_thresh: %s", brightness, self.WHITE_THRESHOLD)
+				#self._log.info("VIKTORIJA: brightness: %s, white_thresh: %s", brightness, self.WHITE_THRESHOLD)
 				if brightness <= self.WHITE_THRESHOLD:
 					if self.change_made == 0 or self.last_brightness == brightness:
 						self.j = self.j + self.direction_left_right
 						self.last_brightness = self.image_copy[self.i,self.j]
-						self.image_copy[self.i,self.j] = 1
+						self.image_copy[self.i,self.j] = 255
 						self.change_made = 1
 						self.same_intensity = 1
 						#print(self.i,self.j,'I change the value of this')
@@ -293,6 +312,7 @@ class ImageProcessor():
 		return
 
 	def search_for_next_pixel_in_the_square(self):
+		self._log.info("VIKTORIJA: ***SQUARE***")
 		for factor_up_down in range (-1,self.SIZE_DISTANCE*(-1)-1,-1):
 			for factor in range (self.SIZE_DISTANCE,self.SIZE_DISTANCE*(-1)-1,-1):
 				if self.j+factor*self.direction_left_right<self.j_max and self.j+factor*self.direction_left_right>=0 and self.i+factor_up_down<self.i_max and self.i+factor_up_down>0:
@@ -302,6 +322,7 @@ class ImageProcessor():
 						self.direction_left_right *= -1
 						self.change_made = 1
 						self.turn_laser_off = 0
+						self._log.info("VIKTORIJA: up, direction: %s, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.direction_left_right,self.i, self.j, self.turn_laser_off, self.change_made)
 						return
 		for factor_up_down in range (1,self.SIZE_DISTANCE):
 			for factor in range (self.SIZE_DISTANCE,self.SIZE_DISTANCE*(-1)-1,-1):
@@ -312,21 +333,27 @@ class ImageProcessor():
 						self.direction_left_right *= -1
 						self.change_made = 1
 						self.turn_laser_off = 0
+						self._log.info("VIKTORIJA: down, direction: %s, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.direction_left_right, self.i, self.j, self.turn_laser_off, self.change_made)
 						return
 		return
 
 	def find_next_pixel_to_remember(self):
-		for j_next in range (1,max(self.j,self.j_max-self.j)):
+		self._log.info("VIKTORIJA: ** remember ***")
+		range_to_search =  1 if self.change_made ==0 else self.SIZE_DISTANCE 
+		for j_next in  range (range_to_search,max(self.j,self.j_max-self.j)):
 			if self.j+j_next*self.direction_left_right < self.j_max and self.j+j_next*self.direction_left_right>=0 :
 				if self.image_copy[self.i,self.j+j_next*self.direction_left_right] <= self.WHITE_THRESHOLD:
 					if self.change_made == 0:
 						self.j = self.j + j_next*self.direction_left_right
 						self.change_made = 1
+						self._log.info("VIKTORIJA: direction: %s, i :%s, j:%s, turn_laser_off:%s, change_made:%s", self.direction_left_right, self.i, self.j, self.turn_laser_off, self.change_made)
 					else:
 						self.j_remember = self.j + j_next*self.direction_left_right
 						self.i_remember = self.i
 						self.remember = 1
 						self.direction_remember = self.direction_left_right
+						self._log.info("VIKTORIJA: direction: %s, i :%s, j:%s, turn_laser_off:%s, change_made:%s", self.direction_left_right, self.i, self.j, self.turn_laser_off, self.change_made)
+					
 					return
 		for j_next in range (1,max(self.j,self.j_max-self.j)):
 			if self.j-j_next*self.direction_left_right < self.j_max and self.j-j_next*self.direction_left_right>=0:
@@ -335,25 +362,28 @@ class ImageProcessor():
 						self.j = self.j - j_next*self.direction_left_right
 						self.change_made = 1
 						self.direction_left_right = self.direction_left_right * (-1)
+						self._log.info("VIKTORIJA: direction: %s, i :%s, j:%s, turn_laser_off:%s, change_made:%s", self.direction_left_right, self.i, self.j, self.turn_laser_off, self.change_made)
 					else:
 						self.j_remember = self.j - j_next*self.direction_left_right
 						self.i_remember = self.i
 						self.remember = 1
 						self.direction_remember = self.direction_left_right
+						self._log.info("VIKTORIJA: direction: %s, i :%s, j:%s, turn_laser_off:%s, change_made:%s", self.direction_left_right, self.i, self.j, self.turn_laser_off, self.change_made)
 					return
 		return
 
-	def set_everything_for_engraving(self):
+	def set_everything_for_engraving(self,x,y,w,h):
 		self.change_made = 0
-		y_gcode = "Y"+str(self.j) if y_gcode != "Y"+str(self.j) else ""
-		x_gcode = "X"+str(self.i) if x_gcode != "X"+str(self.i) else ""
-		gcode += "G"+str(self.turn_laser_off)
-		gcode += x_gcode + y_gcode
-		gcode += ("F{feedrate}S{intensity}".format(feedrate=get_feedrate(self.image_copy[self.i,self.j]), intensity=get_intensity(self.image_copy[self.i,self.j]))) if (self.turn_laser_off==1) else ""
+		self.y_gcode = "Y"+str(self._get_y_gcode_from_pixel(self.j,h,y)) if self.y_gcode != "Y"+str(self.j) else ""
+		self.x_gcode = "X"+str(self._get_x_gcode_from_pixel(self.i,x)) if self.x_gcode != "X"+str(self.i) else ""
+		gcode = "G"+str(self.turn_laser_off)
+		gcode += self.x_gcode + self.y_gcode
+		gcode += ("F{feedrate}S{intensity}".format(feedrate=self.get_feedrate(self.image_copy[self.i,self.j]), intensity=self.get_intensity(self.image_copy[self.i,self.j]))) if (self.turn_laser_off==1) else ""
 		gcode = gcode + '\n'
+		self._log.info("VIKTORIJA: setting gcode, i :%s, j:%s, image_copy:%s,", self.i, self.j, self.image_copy[self.i,self.j])
 		self._append_gcode(gcode)
 	   # print(self.i,self.j,'engrave here', self.image_copy[self.i,self.j])
-		self.image_copy[self.i,self.j] = 1
+		self.image_copy[self.i,self.j] = 255
 	   # print('left with:', sum(self.image_copy[self.image_copy<self.white_thresh]))
 		self.i_last = self.i
 		self.j_last = self.j
@@ -361,15 +391,16 @@ class ImageProcessor():
 		self.same_intensity = 0
 		self.last_brightness = 0
 		# self.to_engrave_left = self.image_copy[self.image_copy < self.WHITE_THRESHOLD]
-		# self._log.info("VIKTORIJA:	to engrave pixels left:\n%d" % self.to_engrave_left)
 		return
 
 	def set_next_pixel_to_the_last_remembered(self):
 		self.i = self.i_remember
 		self.j = self.j_remember
+		self.change_made = 1
 		self.turn_laser_off = 0
 		self.remember = 0
 		self.direction_left_right = self.direction_remember
+		self._log.info("VIKTORIJA:	set_next_pixel_to_the_last_remembered" )
 		return
 
 	def _ignore_pixel_brightness(self, brightness):
@@ -427,8 +458,29 @@ class ImageProcessor():
 
 		image_string = cStringIO.StringIO(base64.b64decode(base64str))
 		return Image.open(image_string)
+		
+	def _get_y_gcode_from_pixel(self, y, height, y_offset):
+		"""
+		Transforms a pixel coordinate's y value to mr beam gcode y val.
+		Note: inverse y-coordinate as images have 0x0 at left top, mr beam at left bottom.
+		:param y: pixel coordinate
+		:param height: image height
+		:param offset: image offset (poassed to generate_gcode() as y)
+		:return: float gcode y coordinate
+		"""
+		return y_offset + (height - y) * self.beam	
 
-
+	def _get_x_gcode_from_pixel(self, x, x_offset):
+		"""
+		Transforms a pixel coordinate's x value to mr beam gcode y val.
+		Note: calculate position; backward lines need to be shifted by +1 beam diameter
+		:param x: pixel_coordinate
+		:param x_offset: x offset  (passed to generate_gcode() as x)
+		:param direction_positive: ?
+		:return: float gcode x coordinate
+		"""
+		return x_offset + self.beam * x 
+		
 	def imgurl_to_gcode(self, url, w,h, x,y, file_id):
 		import urllib, cStringIO
 		file = cStringIO.StringIO(urllib.urlopen(url).read())
@@ -489,6 +541,7 @@ class ImageProcessor():
 			self.output_filehandle.write(gcode)
 		else:
 			self._output_gcode += gcode
+		
 
 
 
