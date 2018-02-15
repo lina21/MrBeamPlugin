@@ -37,9 +37,9 @@ from octoprint_mrbeam.led_events import LedEventListener
 from octoprint_mrbeam.mrbeam_events import MrBeamEvents
 from octoprint_mrbeam.mrb_logger import init_mrb_logger, mrb_logger
 from octoprint_mrbeam.migrate import migrate
-from .profile import laserCutterProfileManager, InvalidProfileError, CouldNotOverwriteError, Profile
-from .software_update_information import get_update_information, SW_UPDATE_TIER_PROD
-from .support import set_support_mode
+from octoprint_mrbeam.profile import laserCutterProfileManager, InvalidProfileError, CouldNotOverwriteError, Profile
+from octoprint_mrbeam.software_update_information import get_update_information, SW_UPDATE_TIER_PROD
+from octoprint_mrbeam.support import set_support_mode
 
 
 
@@ -152,6 +152,20 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 
 		msg = "MrBeam Lasercutter Profile: %s" % self.laserCutterProfileManager.get_current_or_default()
 		self._logger.info(msg, terminal=True)
+
+	def _warn_about_egg_folders(self):
+		self._logger.info("_warn_about_egg_folders() ")
+		site_packages_dir = '/home/pi/site-packages'
+		if os.path.isdir(site_packages_dir):
+			egg_dirs = []
+			for f in os.listdir(site_packages_dir):
+				match = re.match(r'Mr_Beam-.+', f)
+				if match:
+					egg_dirs.append(f)
+			if len(egg_dirs) > 1:
+				self._logger.error("_warn_about_egg_folders() There are more than one Mr_Beam egg folder in %s: %s", site_packages_dir, egg_dirs)
+		else:
+			self._logger.error("delete_egg_dir_leftovers() Dir not existing '%s', Can't check for egg leftovers.")
 
 
 	def _convert_profiles(self, profiles):
