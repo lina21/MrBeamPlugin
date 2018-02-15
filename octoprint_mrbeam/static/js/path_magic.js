@@ -148,7 +148,7 @@ var mrbeam = mrbeam || {};
     pts[0] = point(cx + r, cy);
     pts[n] = point(cx + r, cy);
 
-    for (let i = 1; i < n; ++i) {
+    for (var i = 1; i < n; ++i) {
       var t = i * 2.0 * Math.PI / n;
 
       pts[i] = point(cx + r * Math.cos(t), cy + r * Math.sin(t));
@@ -162,7 +162,7 @@ var mrbeam = mrbeam || {};
 
   module.ellipse = function (cx, cy, rx, ry, delta) {
     // approximate circumference
-    var length = 2.0 * Math.PI * Math.sqrt((rx ** 2 + ry ** 2) / 2.0);
+    var length = 2.0 * Math.PI * Math.sqrt((Math.pow(rx, 2) + Math.pow(ry, 2)) / 2.0);
 
     // number of segments
     var n = Math.ceil(length / delta) | 0;
@@ -174,7 +174,7 @@ var mrbeam = mrbeam || {};
     pts[0] = point(cx + rx, cy);
     pts[n] = point(cx + rx, cy);
 
-    for (let i = 1; i < n; ++i) {
+    for (var i = 1; i < n; ++i) {
       var t = i * 2.0 * Math.PI / n;
 
       pts[i] = point(cx + rx * Math.cos(t), cy + ry * Math.sin(t));
@@ -264,7 +264,7 @@ var mrbeam = mrbeam || {};
     pts[n] = p3;
 
     // interpolate points
-    for (let i = 1; i < n; ++i) {
+    for (var i = 1; i < n; ++i) {
       var t = i * dt;
       var t2 = t * t;
 
@@ -352,7 +352,7 @@ var mrbeam = mrbeam || {};
     pts[n] = p4;
 
     // interpolate points
-    for (let i = 1; i < n; ++i) {
+    for (var i = 1; i < n; ++i) {
       var t = i * dt;
       var t2 = t * t;
       var t3 = t2 * t;
@@ -374,7 +374,7 @@ var mrbeam = mrbeam || {};
   }
 
   function norm(u) {
-    return Math.sqrt(u.x ** 2 + u.y ** 2);
+    return Math.sqrt(Math.pow(u.x, 2) + Math.pow(u.y, 2));
   }
 
   function angle(u, v) {
@@ -390,7 +390,7 @@ var mrbeam = mrbeam || {};
     var x1_ = cosPhi * (p1.x - p2.x) / 2.0 + sinPhi * (p1.y - p2.y) / 2.0;
     var y1_ = -sinPhi * (p1.x - p2.x) / 2.0 + cosPhi * (p1.y - p2.y) / 2.0;
 
-    var Delta = x1_ ** 2 / rx ** 2 + y1_ ** 2 / ry ** 2;
+    var Delta = Math.pow(x1_, 2) / Math.pow(rx, 2) + Math.pow(y1_, 2) / Math.pow(ry, 2);
 
     if (Delta > 1.0) {
       var f = Math.sqrt(Delta);
@@ -399,8 +399,8 @@ var mrbeam = mrbeam || {};
     }
 
     var s = Math.sqrt(
-      (rx ** 2 * ry ** 2 - rx ** 2 * y1_ ** 2 - ry ** 2 * x1_ ** 2) /
-      (rx ** 2 * y1_ ** 2 + ry ** 2 * x1_ ** 2)
+      (Math.pow(rx, 2) * Math.pow(ry, 2) - Math.pow(rx, 2) * Math.pow(y1_, 2) - Math.pow(ry, 2) * Math.pow(x1_, 2)) /
+      (Math.pow(rx, 2) * Math.pow(y1_, 2) + Math.pow(ry, 2) * Math.pow(x1_, 2))
     ) * (fa == fs ? -1.0 : 1.0);
 
     var cx_ = s * rx * y1_ / ry;
@@ -450,7 +450,7 @@ var mrbeam = mrbeam || {};
     pts[n] = p2;
 
     // interpolate points
-    for (let i = 1; i < n; ++i) {
+    for (var i = 1; i < n; ++i) {
       var t = theta1 + i * dt;
 
       var a = rx * Math.cos(t);
@@ -490,7 +490,7 @@ var mrbeam = mrbeam || {};
   module.parse = function (segments, delta) {
     var polylines = [];
 
-    for (let i = 0; i < segments.length; ++i) {
+    for (var i = 0; i < segments.length; ++i) {
       var segment = segments[i];
 
       var command = segment[0];
@@ -627,7 +627,7 @@ var mrbeam = mrbeam || {};
 
     var pts = [];
 
-    for (let i = 0; i < xy.length; i += 2) {
+    for (var i = 0; i < xy.length; i += 2) {
         pts.push(point(xy[i], xy[i+1]));
     }
 
@@ -670,7 +670,7 @@ var mrbeam = mrbeam || {};
 
       pathStrings.push(`M ${fmt(pt.x)},${fmt(pt.y)}`);
 
-      for (let i = 1; i < path.length; i += 1) {
+      for (var i = 1; i < path.length; i += 1) {
         pt = path[i];
         pathStrings.push(`L ${fmt(pt.x)},${fmt(pt.y)}`);
       }
@@ -700,7 +700,7 @@ var mrbeam = mrbeam || {};
       commands.push(`G0X${fmt(pt.x)}Y${fmt(pt.y)}`);
       commands.push(";_laseron_");
 
-      for (let i = 1; i < path.length; i += 1) {
+      for (var i = 1; i < path.length; i += 1) {
         pt = path[i];
         commands.push(`G1X${fmt(pt.x)}Y${fmt(pt.y)}`);
       }

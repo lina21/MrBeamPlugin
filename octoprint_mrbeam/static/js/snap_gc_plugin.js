@@ -47,7 +47,9 @@ Snap.plugin(function (Snap, Element, Paper, global) {
           matrix.e, matrix.f
       ];
 
-      var norm = (x, y) => Math.sqrt(x**2 + y**2);
+      var norm = function(x, y) {
+        return Math.sqrt(Math.pow(x, 2) + Math.pow(y, 2));
+      }
 
       var scaleX = norm(matrix.a, matrix.b);
       var scaleY = norm(matrix.c, matrix.d);
@@ -100,7 +102,10 @@ Snap.plugin(function (Snap, Element, Paper, global) {
   Element.prototype.clean_gc = function () {
     var elements = this.selectAll("path");
 
-    elements.forEach((element) => element.attr("mb:gc", ""));
+//    elements.forEach((element) => element.attr("mb:gc", "")); // ES6 is bad
+    elements.forEach(function(element){
+        element.attr("mb:gc", "");
+    })
   };
 
 
