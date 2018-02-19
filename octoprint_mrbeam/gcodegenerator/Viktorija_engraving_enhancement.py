@@ -185,19 +185,21 @@ class ImageProcessor():
 		
 		self.set_initial_parameters(x,y,w,h, file_id)
 		self._log.info("VIKTORIJA:	initial parametars set")
+		(width,height) = img.size
 
 		# self.to_engrave_left = img.size
 
 		self._log.info("VIKTORIJA:	starting the loop")
+		tmp_image = self.image_copy[self.i_min:self.i_max, self.j_min:self.j_max]
+		self.number_of_pixels_to_engrave = tmp_image[tmp_image<self.WHITE_THRESHOLD].size
 		
-		while self.image_copy[self.image_copy<self.WHITE_THRESHOLD].size > 0:
-			self._log.info("VIKTORIJA: ************************************************************")
+		while self.number_of_pixels_to_engrave > 0:
+			self._log.info("VIKTORIJA: ***************************** i_min: %s, i_max: %s, j_min: %s, j_max: %s", self.i_min, self.i_max, self.j_min, self.j_max)
 			self._log.info("VIKTORIJA: TOP OF LOOP. i: %s, j: %s, left: %s", self.i, self.j, self.image_copy[self.image_copy<self.WHITE_THRESHOLD].size )
-			self._log.info("VIKTORIJA: ************************************************************")
 			self.check_if_pixel_in_boundaries()
 
 			if self.change_made:
-				self.set_everything_for_engraving(x,y,w,h)
+				self.set_everything_for_engraving(x,y,width,height)
 
 			self.search_for_next_pixel_in_the_same_row()
 
@@ -206,26 +208,29 @@ class ImageProcessor():
 
 			self.find_next_pixel_to_remember()
 
+			self._log.info("VIKTORIJA: ----------------------------------------------")
 			if self.change_made == 1:
-				self._log.info("VIKTORIJA: ----------------------------------------------")
 				self._log.info("VIKTORIJA: in change_made == 1, i:%s, j:%s", self.i, self.j)
 				continue
-				
+
 			if self.remember == 1:
-				self._log.info("VIKTORIJA: ----------------------------------------------")
 				self._log.info("VIKTORIJA: in remember == 1, i:%s, j:%s", self.i_remember, self.j_remember)
 				self.set_next_pixel_to_the_last_remembered()
+				self.last_brightness = self.image_copy[self.i,self.j]
 				continue
 			
-			self.i = self.i + 1 if self.i+1<self.i_max else 0
+			self.i = self.i + 1 if self.i+1<self.i_max else self.i_min
 			self._log.info("VIKTORIJA: reached the end")
 			self.turn_laser_off = 0
 
 		self._append_gcode(";EndImage\nM5\n") # important for gcode preview!
-		self._log.info("VIKTORIJA:  FINISHED!!")
+		self._log.info("VIKTORIJA:  FINISHED!! :D")
 		return self._output_gcode
 
 	def set_initial_parameters(self,x,y,w,h, file_id):
+		"""
+		Setting the beginning of gcode and some variables.
+		"""
 		settings_comment = self.get_settings_as_comment(x,y,w,h, "")
 		self._log.info("img2gcode conversion started:\n%s" % settings_comment)
 		self.i,self.j = self.get_closest_distance()
@@ -235,21 +240,30 @@ class ImageProcessor():
 		self._append_gcode(self.get_settings_as_comment(x,y,w,h, file_id))
 		self._append_gcode('F' + str(self.feedrate_white) + '\n') # set an initial feedrate
 		self._append_gcode('M3S0\n') # enable laser
-		self._append_gcode("G0X{:.2f}Y{:.2f}\n".format(self._get_x_gcode_from_pixel(self.i,x), self._get_y_gcode_from_pixel(self.j,h,y)))
+		#self._append_gcode("G0X{:.2f}Y{:.2f}\n".format(self._get_x_gcode_from_pixel(self.i,x), self._get_y_gcode_from_pixel(self.j,h,y)))
 		return
 	
 	def check_if_pixel_in_boundaries(self):
-		if self.i >= self.i_max or self.i < self.i_min:
+		"""
+		Keeps the pixel position in boundaries in which the image to be engraved is.
+		"""
+		if self.i > self.i_max or self.i < self.i_min:
 			self.i = self.i_min
-		if self.j >= self.j_max:
+		if self.j > self.j_max:
 			self.direction_left_right = -1
 			self.i = self.i+1
+			self.j = self.j-1
 		if self.j < self.j_min:
 			self.direction_left_right = 1
 			self.j = self.j+1
 		return
 
 	def get_closest_distance(self):
+		"""
+		This function finds the distance from the starting point of Mr Beam to the 
+		nearest pixel for engraving. It also finds the range of values in which 
+		next pixels should be looked in.
+		"""
 		starting_row = 0
 		starting_col = 0
 		first_row = 0
@@ -262,12 +276,11 @@ class ImageProcessor():
 			#self._log.info("VIKTORIJA: in get_closest_distance() i: %s", i)
 			for j in range(self.image_copy.shape[1]):
 				if self.image_copy[i,j] <= self.WHITE_THRESHOLD:
-					self._log.info("VIKTORIJA: in get_closest_distance() i: %s, j: %s, pixel: %s", i, j, self.image_copy[i,j])
 					distances[i,j] = self.weight_distance(starting_row,i,starting_col,j)
-					self.i_min = i if self.i_min > i else self.i_min
-					self.j_min = j if self.j_min > j else self.j_min
-					self.i_max = i if self.i_max < i else self.i_max
-					self.j_max = j if self.j_max < j else self.j_max
+					self.i_min = i-1 if self.i_min > i else self.i_min
+					self.j_min = j-1 if self.j_min > j else self.j_min
+					self.i_max = i+1 if self.i_max < i else self.i_max
+					self.j_max = j+1 if self.j_max < j else self.j_max
 					if distances[i,j] < min_dist:
 						min_dist = distances[i,j]
 						first_row,first_col = (i,j)
@@ -278,6 +291,13 @@ class ImageProcessor():
 		return max(abs(m1-m2),abs(n1-n2))
 
 	def search_for_next_pixel_in_the_same_row(self):
+		"""
+		This function looks for pixels for engraving on the current row where the laser is.
+		It engraves consecutive pixels that have the same brightness in one movement.
+		If all of the pixels on that row have the same value, it engraves all of them.
+		If all of the pixels between the current and the following in range of self.SIZE_DISTANCE
+		are white it terminates.
+		"""
 		self._log.info("VIKTORIJA: ***ROW***")
 		self.turn_laser_off = 1
 		for factor in range (1,max(self.j_max-self.j,self.j)): #find in the line
@@ -293,6 +313,7 @@ class ImageProcessor():
 						self.image_copy[self.i,self.j] = 255
 						self.change_made = 1
 						self.same_intensity = 1
+						self.number_of_pixels_to_engrave -= 1
 						#print(self.i,self.j,'I change the value of this')
 						continue
 					elif self.change_made == 1 and self.last_brightness != brightness:
@@ -315,6 +336,13 @@ class ImageProcessor():
 		return
 
 	def search_for_next_pixel_in_the_square(self):
+		"""
+		If the previous function was not successful (if there is no pixel to be engraved 
+		in close proximity = self.SIZE_DISTANCE) the next pixel is searched in a square with
+		size 2xself.SIZE_DISTANCE.
+		Because the natural movement of the code is top to bottom, this function checks first
+		if there is something left at the top half of this square, and than at the lower half.
+		"""
 		self._log.info("VIKTORIJA: ***SQUARE***")
 		for factor_up_down in range (-1,self.SIZE_DISTANCE*(-1)-1,-1):
 			for factor in range (self.SIZE_DISTANCE,self.SIZE_DISTANCE*(-1)-1,-1):
@@ -326,6 +354,7 @@ class ImageProcessor():
 						self.change_made = 1
 						self.turn_laser_off = 0
 						self._log.info("VIKTORIJA: up, direction: %s, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.direction_left_right,self.i, self.j, self.turn_laser_off, self.change_made)
+						self.last_brightness = self.image_copy[self.i,self.j]
 						return
 		for factor_up_down in range (1,self.SIZE_DISTANCE):
 			for factor in range (self.SIZE_DISTANCE,self.SIZE_DISTANCE*(-1)-1,-1):
@@ -337,10 +366,19 @@ class ImageProcessor():
 						self.change_made = 1
 						self.turn_laser_off = 0
 						self._log.info("VIKTORIJA: down, direction: %s, i:%s, j:%s, turn_laser_off:%s, change_made:%s", self.direction_left_right, self.i, self.j, self.turn_laser_off, self.change_made)
+						self.last_brightness = self.image_copy[self.i,self.j]
 						return
 		return
 
 	def find_next_pixel_to_remember(self):
+		"""
+		This function is used to find a pixel that might have been skiped on the row where the 
+		laser is currently on. This value will be used in the future if in the next iteration
+		there is no pixel found.
+		This function is also used when there are only few pixels left that are not connected
+		to each other. In that case the whole image is scaned, and these pixels are engraved 
+		one by one.
+		"""
 		self._log.info("VIKTORIJA: ** remember ***")
 		range_to_search =  1 if self.change_made ==0 else self.SIZE_DISTANCE 
 		for j_next in  range (range_to_search,max(self.j,self.j_max-self.j)):
@@ -376,12 +414,16 @@ class ImageProcessor():
 		return
 
 	def set_everything_for_engraving(self,x,y,w,h):
+		"""
+		The gcode for engraving is writen, and also some of the global variables are reset.
+		"""
+		self.number_of_pixels_to_engrave -= 1 
 		self.change_made = 0
 		self.y_gcode = "Y"+str(self._get_y_gcode_from_pixel(self.j,h,y)) if self.y_gcode != "Y"+str(self.j) else ""
 		self.x_gcode = "X"+str(self._get_x_gcode_from_pixel(self.i,x)) if self.x_gcode != "X"+str(self.i) else ""
 		gcode = "G"+str(self.turn_laser_off)
 		gcode += self.x_gcode + self.y_gcode
-		gcode += ("F{feedrate}S{intensity}".format(feedrate=self.get_feedrate(self.image_copy[self.i,self.j]), intensity=self.get_intensity(self.image_copy[self.i,self.j]))) if (self.turn_laser_off==1) else ""
+		gcode += ("F{feedrate}S{intensity}".format(feedrate=self.get_feedrate(self.image_copy[self.i,self.j]), intensity=self.get_intensity(self.last_brightness))) if (self.turn_laser_off==1) else ""
 		gcode = gcode + '\n'
 		self._log.info("VIKTORIJA: setting gcode, i :%s, j:%s, image_copy:%s,", self.i, self.j, self.image_copy[self.i,self.j])
 		self._append_gcode(gcode)
@@ -397,6 +439,11 @@ class ImageProcessor():
 		return
 
 	def set_next_pixel_to_the_last_remembered(self):
+		"""
+		If there is no pixel to be engraved in close proximity of the current position of 
+		the laser, the value that is found being far from the current, but on the same row
+		is set to be engraved.
+		"""
 		self.i = self.i_remember
 		self.j = self.j_remember
 		self.change_made = 1
