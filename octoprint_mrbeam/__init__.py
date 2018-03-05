@@ -96,6 +96,7 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 		self._setHostname()
 		self._setMbSerialnumber()
 		self._device_series = self._get_val_from_device_info('device_series')  # '2C'
+		self._grbl_version = None
 
 	# inside initialize() OctoPrint is already loaded, not assured during __init__()!
 	def initialize(self):
@@ -365,6 +366,7 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 							 beamosVersionBranch = self._branch,
 							 beamosVersionDisplayVersion = display_version_string,
 							 beamosVersionImage = self._octopi_info,
+							 beamosVersionGrbl = self.get_grbl_version(),
 
 							 env=self.get_env(),
 							 env_local=self.get_env(self.ENV_LOCAL),
@@ -1618,6 +1620,11 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 			else:
 				label = "{} | VORLON".format(label)
 		return label
+
+	def get_grbl_version(self):
+		if self._printer and self._printer._comm and self._printer._comm._grbl_version:
+			self._grbl_version = self._printer._comm._grbl_version
+		return self._grbl_version
 
 	def is_vorlon_enabled(self):
 		vorlon = self._settings.get(['vorlon'])
