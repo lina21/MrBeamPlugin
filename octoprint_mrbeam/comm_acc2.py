@@ -63,7 +63,13 @@ class MachineCom(object):
 	COMMAND_FLUSH    = 'FLUSH'
 	COMMAND_SYNC     = 'SYNC' # experimental
 
-	GRBL_SYNC_COMMAND_WAIT_STATES = (GRBL_STATE_RUN, GRBL_STATE_QUEUE)
+	STATUS_POLL_FREQUENCY_OPERATIONAL = 2
+	STATUS_POLL_FREQUENCY_PRINTING    = 1
+	STATUS_POLL_FREQUENCY_PAUSED      = 0.2
+	STATUS_POLL_FREQUENCY_SYNCING     = 0.2
+	STATUS_POLL_FREQUENCY_DEFAULT     = STATUS_POLL_FREQUENCY_PRINTING
+
+	GRBL_SYNC_COMMAND_WAIT_STATES = (GRBL_STATE_RUN, GRBL_STATE_QUEUE, None)
 	GRBL_HEX_FOLDER = 'files/grbl/'
 
 	pattern_grbl_status_legacy = re.compile("<(?P<status>\w+),.*MPos:(?P<mpos_x>[0-9.\-]+),(?P<mpos_y>[0-9.\-]+),.*WPos:(?P<pos_x>[0-9.\-]+),(?P<pos_y>[0-9.\-]+),.*RX:(?P<rx>\d+),.*laser (?P<laser_state>\w+):(?P<laser_intensity>\d+).*>")
@@ -276,12 +282,17 @@ class MachineCom(object):
 					self._sync_command_ts = time.time()
 					self._log("SYNCing (grbl_state: {}, acc_line_buffer: {}, grbl_rx: {})".format(
 					                  self._grbl_state, sum([len(x) for x in self._acc_line_buffer]), self._grbl_rx_status))
+					self._sendCommand("M5\n")
+					self._set_status_poll_frequency(self.STATUS_POLL_FREQUENCY_SYNCING, run_first=True)
 				if len(self._acc_line_buffer) <= 0 and not self._grbl_state in self.GRBL_SYNC_COMMAND_WAIT_STATES:
 					# Successfully synced, let's move on
 					self._cmd = None
-					self._log("SYNCed ({}ms)".format(int(1000*(time.time() - self._sync_command_ts))))
+					self._log("SYNCed ({}ms, laser intensity: {})".format(int(1000*(time.time() - self._sync_command_ts)), self._current_intensity))
 					self._sync_command_ts = -1
 					self._sync_command_state_sent = False
+					self._grbl_state = None
+					self._set_status_poll_frequency_from_state()
+					self._sendCommand("M3S%d\n" % self._current_intensity)
 				elif len(self._acc_line_buffer) <= 0 and self._grbl_state in self.GRBL_SYNC_COMMAND_WAIT_STATES and not self._sync_command_state_sent:
 					# Request a status update from GRBL to see if it's really ready.
 					self._sync_command_state_sent = True
@@ -302,7 +313,7 @@ class MachineCom(object):
 					self.close(True)
 		else:
 			cmd, _, _  = self._process_command_phase("sending", cmd)
-			self._log("Send: %s" % cmd)
+			self._log("Send: %s" % cmd.strip())
 			try:
 
 				self._serial.write(cmd)
@@ -720,21 +731,7 @@ class MachineCom(object):
 		if self._state == newState:
 			return
 
-		if newState == self.STATE_PRINTING:
-			if self._status_timer is not None:
-				self._status_timer.cancel()
-			self._status_timer = RepeatedTimer(1, self._poll_status)
-			self._status_timer.start()
-		elif newState == self.STATE_OPERATIONAL:
-			if self._status_timer is not None:
-				self._status_timer.cancel()
-			self._status_timer = RepeatedTimer(2, self._poll_status)
-			self._status_timer.start()
-		elif newState == self.STATE_PAUSED:
-			if self._status_timer is not None:
-				self._status_timer.cancel()
-			self._status_timer = RepeatedTimer(0.2, self._poll_status)
-			self._status_timer.start()
+		self._set_status_poll_frequency_from_state(newState)
 
 		if newState == self.STATE_CLOSED or newState == self.STATE_CLOSED_WITH_ERROR:
 			if self._currentFile is not None:
@@ -789,6 +786,42 @@ class MachineCom(object):
 		self._logger.comm(message)
 		self._serialLogger.debug(message)
 
+	def _set_status_poll_frequency(self, frequency, run_first=False):
+		"""
+		Starts or restarts polling_timer with given frequency.
+		Theres is one important thing to know about GRBL:
+		 You should not query status more often than 5Hz
+		 https://github.com/grbl/grbl/wiki/Interfacing-with-Grbl#status-reporting
+		:param frequency:
+		:param run_first: If true first execution is done immediately, without waiting
+		"""
+		if self._status_timer is not None:
+			self._status_timer.cancel()
+		self._status_timer = RepeatedTimer(frequency, self._poll_status, run_first=run_first)
+		self._status_timer.start()
+
+	def _stop_status_polling(self):
+		"""
+		stops polling timer
+		"""
+		if self._status_timer is not None:
+			try:
+				self._status_timer.cancel()
+				self._status_timer = None
+			except AttributeError:
+				pass
+
+	def _set_status_poll_frequency_from_state(self, state=None):
+		if state is None:
+			state = self._state
+		if state == self.STATE_PRINTING:
+			self._set_status_poll_frequency(self.STATUS_POLL_FREQUENCY_PRINTING)
+		elif state == self.STATE_OPERATIONAL:
+			self._set_status_poll_frequency(self.STATUS_POLL_FREQUENCY_OPERATIONAL)
+		elif state == self.STATE_PAUSED:
+			self._set_status_poll_frequency(self.STATUS_POLL_FREQUENCY_PAUSED)
+		else:
+			self._set_status_poll_frequency(self.STATUS_POLL_FREQUENCY_DEFAULT)
 
 	def flash_grbl(self, grbl_file=None, verify_only=False):
 		"""
@@ -998,7 +1031,8 @@ class MachineCom(object):
 				temp = round(self._actual_intensity * self._intensity_factor)
 				if temp > intensity_limit:
 					temp = intensity_limit
-				self.sendCommand('S%d' % round(temp))
+					self._current_intensity = round(temp)
+				self.sendCommand('S%d' % self._current_intensity)
 
 	def _replace_feedrate(self, cmd):
 		obj = self._regex_feedrate.search(cmd)
@@ -1026,8 +1060,9 @@ class MachineCom(object):
 			intensity_cmd = cmd[obj.start():obj.end()]
 			parsed_intensity = int(intensity_cmd[1:])
 			self._actual_intensity = parsed_intensity if parsed_intensity <= intensity_limit else intensity_limit
+			self._current_intensity = round(self._actual_intensity)
 			if self._actual_intensity != parsed_intensity:
-				return cmd.replace(intensity_cmd, 'S%d' % round(self._actual_intensity))
+				return cmd.replace(intensity_cmd, 'S%d' % self._current_intensity)
 			elif self._intensity_factor != 1:
 				# _intensity_factor is deprecated
 				if intensity_cmd in self._intensity_dict:
@@ -1037,7 +1072,8 @@ class MachineCom(object):
 					if new_intensity > intensity_limit:
 						new_intensity = intensity_limit
 					self._intensity_dict[intensity_cmd] = new_intensity
-				return cmd.replace(intensity_cmd, 'S%d' % round(new_intensity))
+				self._current_intensity = round(new_intensity)
+				return cmd.replace(intensity_cmd, 'S%d' % self._current_intensity)
 		return cmd
 
 	##~~ command handlers
@@ -1106,21 +1142,16 @@ class MachineCom(object):
 				specialcmd = tokens[0].lower()
 				if specialcmd.startswith('/togglestatusreport'):
 					if self._status_timer is None:
-						self._status_timer = RepeatedTimer(1, self._poll_status)
-						self._status_timer.start()
+						self._set_status_poll_frequency_from_state()
 					else:
-						self._status_timer.cancel()
-						self._status_timer = None
+						self._stop_status_polling()
 				elif specialcmd.startswith('/setstatusfrequency'):
+					frequency = 1
 					try:
 						frequency = float(tokens[1])
 					except ValueError:
-						self._log("No frequency setting found! Using 1 sec.")
-						frequency = 1
-					if self._status_timer is not None:
-						self._status_timer.cancel()
-					self._status_timer = RepeatedTimer(frequency, self._poll_status)
-					self._status_timer.start()
+						self._log("No frequency setting found! Using %s sec." % frequency)
+					self._set_status_poll_frequency(frequency)
 				elif specialcmd.startswith('/disconnect'):
 					self.close()
 				elif specialcmd.startswith('/feedrate'):
@@ -1423,13 +1454,7 @@ class MachineCom(object):
 		return self._grbl_version
 
 	def close(self, isError=False, next_state=None):
-		if self._status_timer is not None:
-			try:
-				self._status_timer.cancel()
-				self._status_timer = None
-			except AttributeError:
-				pass
-
+		self._stop_status_polling()
 		self._monitoring_active = False
 		self._sending_active = False
 

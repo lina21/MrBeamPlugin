@@ -43,7 +43,8 @@ class ImageProcessor():
 	              speed_white = 3000,
 	              dithering = False,
 	              pierce_time = 0,
-	              material = None):
+	              material = None,
+	              sync_in_engravings = True):
 		self._log = logging.getLogger("octoprint.plugins.mrbeam.img2gcode")
 
 		self.output_filehandle = output_filehandle
@@ -62,6 +63,7 @@ class ImageProcessor():
 		self.contrastFactor = float(contrast) if contrast else 0.0
 		self.sharpeningFactor = float(sharpening) if sharpening else 0.0
 		self.dithering = (dithering == True or dithering == "True")
+		self.sync_in_engravings = sync_in_engravings
 
 		self.debugPreprocessing = False
 		self.debugPreprocessing = True
@@ -214,10 +216,14 @@ class ImageProcessor():
 
 
 	def get_gcode_for_equal_pixels(self, brightness, target_x, target_y, last_y, comment=""):
+		gcode = ""
+		if target_y != last_y and self.sync_in_engravings:
+			gcode += "SYNC ;new line: {}\n".format(target_y)
+
 		# fast skipping whitespace
 		if(self._ignore_pixel_brightness(brightness) ):
 			y_gcode = "Y"+self.twodigits(target_y) if target_y != last_y else ""
-			gcode = "G0X" + self.twodigits(target_x) + y_gcode + "S0" + comment +"\n"
+			gcode += "G0X" + self.twodigits(target_x) + y_gcode + "S0" + comment +"\n"
 
 			# pierctime after skipping whitespace
 			# fixed piercetime
@@ -236,7 +242,7 @@ class ImageProcessor():
 		else:
 			intensity = self.get_intensity(brightness)
 			feedrate = self.get_feedrate(brightness)
-			gcode = "G0Y"+self.twodigits(target_y)+"S0\n" if target_y != last_y else ""
+			gcode += "G0Y"+self.twodigits(target_y)+"S0\n" if target_y != last_y else ""
 			gcode += "G1X" + self.twodigits(target_x) + "F"+str(feedrate) + "S"+str(intensity)+ comment +"\n" # move until next intensity
 
 		return gcode

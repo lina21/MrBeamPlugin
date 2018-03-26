@@ -61,7 +61,8 @@ class Converter():
 		self.document=None
 		self._log.info('Converter Initialized: %s' % self.options)
 		# todo need material,bounding_box_area here
-		_mrbeam_plugin_implementation._analytics_handler.store_conversion_details(self.options)
+		if _mrbeam_plugin_implementation and _mrbeam_plugin_implementation._analytics_handler:
+			_mrbeam_plugin_implementation._analytics_handler.store_conversion_details(self.options)
 
 	def setoptions(self, opts):
 		# set default values if option is missing
@@ -257,7 +258,7 @@ class Converter():
 					for colorKey in paths_by_color.keys():
 						if colorKey == 'none':
 							continue
-							
+
 						settings = self.colorParams.get(colorKey, {'intensity': -1, 'feedrate': -1, 'passes': 0, 'pierce_time': 0})
 						if(settings['feedrate'] == None or settings['feedrate'] == -1 or settings['intensity'] == None or settings['intensity'] <= 0):
 							self._log.info( "convert() skipping color %s, no valid settings %s." % (colorKey, settings))
