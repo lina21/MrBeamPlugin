@@ -8,6 +8,7 @@ import os
 import threading
 import logging
 import glob
+import collections
 import time
 import serial
 import re
@@ -29,6 +30,7 @@ from octoprint.util import get_exception_string, RepeatedTimer, CountedEvent, sa
 from octoprint_mrbeam.mrb_logger import mrb_logger
 from octoprint_mrbeam.analytics.analytics_handler import existing_analyticsHandler
 from octoprint_mrbeam.util.cmd_exec import exec_cmd_output
+from octoprint_mrbeam.lib.rwlock import RWLock
 
 ### MachineCom #########################################################################################################
 class MachineCom(object):
@@ -107,10 +109,14 @@ class MachineCom(object):
 		self._grbl_version = None
 		self._grbl_settings = dict()
 		self._errorValue = "Unknown Error"
+		self._w_pos_x = -1
+		self._w_pos_y = -1
+		self._m_pos_x = 1
+		self._m_pos_y = 1
 		self._serial = None
 		self._currentFile = None
 		self._status_timer = None
-		self._acc_line_buffer = []
+		self._acc_line_buffer = AccLineBuffer()
 		self._cmd = None
 		self._pauseWaitStartTime = None
 		self._pauseWaitTimeLost = 0.0
@@ -118,6 +124,11 @@ class MachineCom(object):
 		self._send_event = CountedEvent(max=50)
 		self._finished_currentFile = False
 		self._pause_delay_time = 0
+		self._current_feedrate = None
+		self._current_intensity = None
+		self._current_pos_x = None
+		self._current_pos_y = None
+		self._current_laser_on = False
 		self._feedrate_factor = 1
 		self._actual_feedrate = None
 		self._intensity_factor = 1
@@ -132,11 +143,17 @@ class MachineCom(object):
 		self.limit_y = -1
 		# from GRBL status RX value: Number of characters queued in Grbl's serial RX receive buffer.
 		self._grbl_rx_status = -1
+		self._recovering = False
+		self._recovery_blacklist = [] # TODO ANDYTEST when to reset?
+		self._last_error_cmd = None
 
 		# regular expressions
 		self._regex_command = re.compile("^\s*\$?([GM]\d+|[THFSX])")
 		self._regex_feedrate = re.compile("F\d+", re.IGNORECASE)
 		self._regex_intensity = re.compile("S\d+", re.IGNORECASE)
+		self._regex_position_x = re.compile("X(\d+\.?\d*)?", re.IGNORECASE)
+		self._regex_position_y = re.compile("Y(\d+\.?\d*)?", re.IGNORECASE)
+		self._regex_gcode = re.compile("([XY])(\d+\.?\d*)", re.IGNORECASE)
 
 		self._real_time_commands={'poll_status':False,
 								'feed_hold':False,
@@ -228,14 +245,14 @@ class MachineCom(object):
 		while self._sending_active:
 			try:
 				self._process_rt_commands()
-				if self.isPrinting() and self._commandQueue.empty():
+				if self.isPrinting() and self._commandQueue.empty() and not self._recovering:
 					cmd = self._getNext()
 					if cmd is not None:
 						self.sendCommand(cmd)
 						self._callback.on_comm_progress()
 					else:
 						if self._finished_passes >= self._passes:
-							if len(self._acc_line_buffer) == 0:
+							if self._acc_line_buffer.is_empty():
 								self._set_print_finished()
 						self._currentFile.resetToBeginning()
 						cmd = self._getNext()
@@ -243,6 +260,7 @@ class MachineCom(object):
 							self.sendCommand(cmd)
 							self._callback.on_comm_progress()
 
+				# self._logger.info("ANDYTEST _send_loop() ____")
 				self._sendCommand()
 				self._send_event.wait(1)
 				self._send_event.clear()
@@ -256,22 +274,34 @@ class MachineCom(object):
 				self._logger.dump_terminal_buffer(level=logging.ERROR)
 
 	def _sendCommand(self, cmd=None):
+		"""
+		Takes command from:
+		 - parameter passed to this function, (!! treated as real time command)
+		 - self._cmd or
+		 - self._commandQueue.get()
+		and writes it onto serial.
+		If command is passed as parameter it's treated as a real time command,
+		which means there are no checks if it will exceed grbl buffer current capacity.
+		:param cmd: treated as real time command
+		"""
 		if cmd is None:
-			if self._cmd is None and self._commandQueue.empty():
+			if (self._cmd is None and self._commandQueue.empty()) or self._recovering:
 				return
 			elif self._cmd is None:
 				self._cmd = self._commandQueue.get()
+
 			if self._cmd == self.COMMAND_FLUSH:
 				# FLUSH waits until we're no longer waiting for any OKs from GRBL
 				if self._sync_command_ts <=0:
 					self._sync_command_ts = time.time()
 					self._log("FLUSHing (grbl_state: {}, acc_line_buffer: {}, grbl_rx: {})".format(
-					                  self._grbl_state, sum([len(x) for x in self._acc_line_buffer]), self._grbl_rx_status))
-				if len(self._acc_line_buffer) <= 0:
+					                  self._grbl_state, self._acc_line_buffer.get_char_len(), self._grbl_rx_status))
+				if self._acc_line_buffer.is_empty():
 					self._cmd = None
 					self._log("FLUSHed ({}ms)".format(int(1000*(time.time() - self._sync_command_ts))))
 					self._sync_command_ts = -1
 				self._send_event.set()
+
 			elif self._cmd == self.COMMAND_SYNC:
 				# SYNC waits until we're no longer waiting for any OKs from GRBL and GRBL has reported to no be busy anymore.
 				# Still experimential: We need to test/verify/implement:
@@ -281,10 +311,10 @@ class MachineCom(object):
 				if self._sync_command_ts <=0:
 					self._sync_command_ts = time.time()
 					self._log("SYNCing (grbl_state: {}, acc_line_buffer: {}, grbl_rx: {})".format(
-					                  self._grbl_state, sum([len(x) for x in self._acc_line_buffer]), self._grbl_rx_status))
-					self._sendCommand("M5\n")
+					                  self._grbl_state, self._acc_line_buffer.get_char_len(), self._grbl_rx_status))
+					self._sendCommand("M5\n") # TODO: no check if this exceeds grbls buffer
 					self._set_status_poll_frequency(self.STATUS_POLL_FREQUENCY_SYNCING, run_first=True)
-				if len(self._acc_line_buffer) <= 0 and not self._grbl_state in self.GRBL_SYNC_COMMAND_WAIT_STATES:
+				if self._acc_line_buffer.is_empty() and not self._grbl_state in self.GRBL_SYNC_COMMAND_WAIT_STATES:
 					# Successfully synced, let's move on
 					self._cmd = None
 					self._log("SYNCed ({}ms, laser intensity: {})".format(int(1000*(time.time() - self._sync_command_ts)), self._current_intensity))
@@ -292,25 +322,35 @@ class MachineCom(object):
 					self._sync_command_state_sent = False
 					self._grbl_state = None
 					self._set_status_poll_frequency_from_state()
-					self._sendCommand("M3S%d\n" % self._current_intensity)
-				elif len(self._acc_line_buffer) <= 0 and self._grbl_state in self.GRBL_SYNC_COMMAND_WAIT_STATES and not self._sync_command_state_sent:
+					self._sendCommand("M3S%d\n" % self._current_intensity) # TODO: no check if this exceeds grbls buffer
+				elif self._acc_line_buffer.is_empty() and self._grbl_state in self.GRBL_SYNC_COMMAND_WAIT_STATES and not self._sync_command_state_sent:
 					# Request a status update from GRBL to see if it's really ready.
 					self._sync_command_state_sent = True
-					self._sendCommand(self.COMMAND_STATUS)
+					# self._sendCommand(self.COMMAND_STATUS)
+					self._real_time_commands['poll_status'] = True
 				self._send_event.set()
-			elif sum([len(x) for x in self._acc_line_buffer]) + len(self._cmd) +1 < self.RX_BUFFER_SIZE-5:
-				self._cmd, _, _  = self._process_command_phase("sending", self._cmd)
-				self._log("Send: %s" % self._cmd)
-				self._acc_line_buffer.append(self._cmd + '\n')
-				try:
-					self._serial.write(self._cmd + '\n')
-					self._process_command_phase("sent", self._cmd)
-					self._cmd = None
-					self._send_event.set()
-				except serial.SerialException:
-					self._log("Unexpected error while writing serial port: %s" % (get_exception_string()))
-					self._errorValue = get_exception_string()
-					self.close(True)
+
+			else:
+				my_cmd = self._cmd # to avoid race conditions
+				if my_cmd and self._acc_line_buffer.get_char_len() + len(my_cmd) +1 < self.RX_BUFFER_SIZE-5:
+					my_cmd, _, _  = self._process_command_phase("sending", my_cmd)
+					self._log("Send: %s" % my_cmd)
+					self._acc_line_buffer.add(my_cmd + '\n',
+					                          intensity=self._current_intensity,
+					                          feedrate=self._current_feedrate,
+					                          pos_x=self._current_pos_x,
+					                          pos_y=self._current_pos_y,
+					                          laser=self._current_laser_on)
+					try:
+						self._serial.write(my_cmd + '\n')
+						self._process_command_phase("sent", my_cmd)
+						self._cmd = None
+						self._send_event.set()
+					except serial.SerialException:
+						self._log("Unexpected error while writing serial port: %s" % (get_exception_string()))
+						self._errorValue = get_exception_string()
+						self.close(True)
+
 		else:
 			cmd, _, _  = self._process_command_phase("sending", cmd)
 			self._log("Send: %s" % cmd.strip())
@@ -392,12 +432,20 @@ class MachineCom(object):
 		if self._serial is None:
 			return None
 		ret = None
+		item = None
 		try:
 			ret = self._serial.readline()
 			self._send_event.set()
-			if('ok' in ret or 'error' in ret):
-				if(len(self._acc_line_buffer) > 0):
-					del self._acc_line_buffer[0]  # Delete the commands character count corresponding to the last 'ok'
+			if('ok' in ret):
+				if not self._acc_line_buffer.is_empty():
+					item = self._acc_line_buffer.remove()  # Delete the commands character count corresponding to the last 'ok'
+					self._last_error_cmd = None
+			elif('error' in ret):
+				# if not self._acc_line_buffer.is_empty():
+					# item = self._acc_line_buffer.remove()  # Delete the commands character count corresponding to the last 'ok'
+					self._last_error_cmd = self._acc_line_buffer.get_last_confirmed_item()
+					item = self._last_error_cmd
+					self._logger.warn("Grbl responded error '%s' to command: '%s'", ret.strip(), self._last_error_cmd)
 		except serial.SerialException:
 			self._logger.error("Unexpected error while reading serial port: %s" % (get_exception_string()), terminal_as_comm=True)
 			self._errorValue = get_exception_string()
@@ -411,7 +459,10 @@ class MachineCom(object):
 			pass
 		if ret is None or ret == '': return ''
 		try:
-			self._log("Recv: %s" % sanitize_ascii(ret))
+			if item is not None:
+				self._log("Recv: %s  [%s (%s)]" % (sanitize_ascii(ret), item['cmd'].strip(), item['id']))
+			else:
+				self._log("Recv: %s" % sanitize_ascii(ret))
 		except ValueError as e:
 			self._log("WARN: While reading last line: %s" % e)
 			self._log("Recv: %r" % ret)
@@ -469,11 +520,11 @@ class MachineCom(object):
 
 		# positions
 		try:
-			self.MPosX = float(groups['mpos_x'])
-			self.MPosY = float(groups['mpos_y'])
-			wx = float(groups['pos_x'])
-			wy = float(groups['pos_y'])
-			self._callback.on_comm_pos_update([self.MPosX, self.MPosY, 0], [wx, wy, 0])
+			self._w_pos_x = float(groups['pos_x'])
+			self._w_pos_y = float(groups['pos_y'])
+			self._m_pos_x = float(groups['mpos_x'])
+			self._m_pos_y = float(groups['mpos_y'])
+			self._callback.on_comm_pos_update([self._m_pos_x, self._m_pos_y, 0], [self._w_pos_x, self._w_pos_y, 0])
 		except:
 			self._logger.exception("Exception while handling position updates from GRBL.")
 
@@ -513,6 +564,11 @@ class MachineCom(object):
 	def _handle_error_message(self, line):
 		if "EEPROM read fail" in line:
 			return
+		if "Invalid gcode ID:24" in line:
+			self._logger.error("Error detected: Invalid gcode ID:24!!!!!")
+			self._recover_from_error()
+			# self._logger.dump_terminal_buffer(level=logging.ERROR)
+			return
 		self._errorValue = line
 		eventManager().fire(OctoPrintEvents.ERROR, {"error": self.getErrorString()})
 		self._changeState(self.STATE_LOCKED)
@@ -539,7 +595,7 @@ class MachineCom(object):
 
 		with self._commandQueue.mutex:
 			self._commandQueue.queue.clear()
-		self._acc_line_buffer = []
+		self._acc_line_buffer.reset()
 		self._send_event.clear(completely=True)
 		self._changeState(self.STATE_LOCKED)
 
@@ -557,7 +613,7 @@ class MachineCom(object):
 			if self.isOperational():
 				errorMsg = "Machine reset."
 				self._cmd = None
-				self._acc_line_buffer = []
+				self._acc_line_buffer.reset()
 				self._pauseWaitStartTime = None
 				self._pauseWaitTimeLost = 0.0
 				self._send_event.clear(completely=True)
@@ -618,6 +674,185 @@ class MachineCom(object):
 			self._grbl_settings[id] = dict(value=value, comment=comment)
 		else:
 			self._logger.error("_handle_settings_message() line did not mach pattern: %s", line)
+
+	def _recover_from_error(self):
+		self._logger.info("ANDYTEST _recover_from_error()")
+		if self._recovering:
+			raise Exception("Trying to recover from an error but looks like theres is already a recovery going on...")
+		self._recovering = True
+		current_cmd = self._cmd
+		self._cmd = None
+		self._logger.info("Recovery: prepairing...", terminal_as_comm=True)
+		self._logger.info("ANDYTEST Recovery: _commandQueue: %s", self._commandQueue.qsize())
+		culpit = self._last_error_cmd
+
+		history = self._acc_line_buffer
+		self._acc_line_buffer = AccLineBuffer()
+		if current_cmd:
+			# this will execute all cammand handlers and therefor update _current_intensity and _curent_feedrate
+			current_cmd, _, _ = self._process_command_phase("sending", current_cmd)
+			history.add(current_cmd,
+			            intensity=self._current_intensity,
+			            feedrate=self._current_feedrate,
+			            pos_x=self._current_pos_x,
+			            pos_y=self._current_pos_y,
+			            laser=self._current_laser_on
+			            )
+
+		time.sleep(0.1)
+
+		if self._cmd is not None:
+			self._logger.info("ANDYTEST Recovery: and another self._cmd: %s", self._cmd)
+			# this will execute all cammand handlers and therefor update _current_intensity and _curent_feedrate
+			current_cmd, _, _ = self._process_command_phase("sending", current_cmd)
+			history.add(current_cmd,
+			            intensity=self._current_intensity,
+			            feedrate=self._current_feedrate,
+			            pos_x=self._current_pos_x,
+			            pos_y=self._current_pos_y,
+			            laser=self._current_laser_on
+			            )
+
+		self._logger.info("ANDYTEST Recovery: _commandQueue: %s", self._commandQueue.qsize())
+		while not self._commandQueue.empty():
+			current_cmd = self._commandQueue.get()
+			current_cmd, _, _ = self._process_command_phase("sending", current_cmd)
+			history.add(current_cmd,
+			            intensity=self._current_intensity,
+			            feedrate=self._current_feedrate,
+			            pos_x=self._current_pos_x,
+			            pos_y=self._current_pos_y,
+			            laser=self._current_laser_on
+			            )
+			
+		wait_time = 3.0 # TODO ANDYTEST
+		recovering_thread = threading.Timer(3.0, self._recover_from_error_in_separate_thread, args=[history, culpit])
+		recovering_thread.name = "comm._recovery_thread"
+		recovering_thread.daemon = True
+		recovering_thread.start()
+		self._logger.debug("Recovery timer starts in %s s", wait_time)
+
+
+	def _recover_from_error_in_separate_thread(self, history, culpit=None):
+		try:
+			self._logger.info("ANDYTEST recovering: %s", history)
+			self._recovering = True
+
+			if culpit['cmd'].upper().count('G') > 1 or \
+				culpit['cmd'].upper().count('X') > 1 or \
+				culpit['cmd'].upper().count('Y') > 1 or \
+				culpit['cmd'].upper().count('S') > 1 or \
+				culpit['cmd'].upper().count('F') > 1:
+				self._recovery_blacklist.append(culpit['cmd'])
+				self._logger.info("Recovery: culpit with errors put to blacklist immediately: '%s' _recovery_blacklist: %s", culpit, self._recovery_blacklist)
+				culpit = None
+			else:
+				self._logger.info("Recovery: culpit: '%s' _recovery_blacklist: %s", culpit, self._recovery_blacklist)
+
+			self._logger.info("Recovery: waiting for Idle state", terminal_as_comm=True)
+			self._set_status_poll_frequency(1.0, run_first=True)
+			while self._grbl_state != self.GRBL_STATE_IDLE:
+				self._logger.info("ANDYTEST recover waiting for Idle state: _grbl_state:%s, wpos: %s,%s", self._grbl_state, self._w_pos_x, self._w_pos_y)
+				time.sleep(0.1)
+			self._logger.info("ANDYTEST recover waiting DONE: _grbl_state:%s, wpos: %s,%s", self._grbl_state, self._w_pos_x, self._w_pos_y)
+
+
+
+			recovery_cmds = []
+			steps = history.get_recovery_steps()
+			self._logger.info("ANDYTEST recover steps: %s", steps)
+
+			if len(steps) > 0:
+				# move to position where we were before the first command from history.
+				recovery_cmds.append("G0X{x}Y{y}".format(x=steps[0]['x'], y=steps[0]['y']))
+
+				if steps[0]['l']:
+					recovery_cmds.append("M3F{f}S{i}".format(f=steps[0]['f'], i=steps[0]['i']))
+				else:
+					recovery_cmds.append("M5")
+					recovery_cmds.append("F{f}S{i}".format(f=steps[0]['f'], i=steps[0]['i']))
+
+			for s in steps:
+				if not s['cmd'] in self._recovery_blacklist:
+					recovery_cmds.append(s['cmd'])
+				else:
+					self._logger.warn("Recovery: Skipping command since it's been already blacklisted for recovery: '%s'", s['cmd'])
+
+
+			self._logger.info("Recovery commands: %s", recovery_cmds, terminal_as_comm=True)
+			self._logger.info("Recovery: start", terminal_as_comm=True)
+
+			# put it in blacklist only here. Every command should have a second chance
+			if culpit is not None:
+				self._recovery_blacklist.append(culpit['cmd'])
+
+			# ok, now let's bring it on the road!
+			for c in recovery_cmds:
+				self.sendCommand(c, processed=False)
+
+
+			# # TODO make sure we have enought history steps
+			# history = recover.get_history(4)
+			# self.sendCommand("M5")
+			# # TODO: make sure this is realy a setp command that brings us in the assumed position
+			# self.sendCommand(history[0]['cmd'])
+			#
+			# cmd = "M3F%dS%d\n" % (history[1]['f'], history[1]['i'])
+			# self.sendCommand(cmd)
+			# self.sendCommand(history[1]['cmd'])
+			# self.sendCommand(history[2]['cmd'])
+			# self.sendCommand(history[3]['cmd'])
+			#
+			# while not recover.is_empty():
+			# 	c = recover.get_first_item()
+			# 	self.sendCommand(c['cmd'], processed=False)
+			# 	recover.remove(skip_history=True)
+
+
+
+
+			#
+			#
+			# # let's keet current valss which we need only if recovery is empty
+			# intensity = self._current_intensity
+			# feedrate = self._current_feedrate
+			#
+			# # now we move laser to oldest know position.
+			# # but we need to turn laser off on our way there because we don't know if it should be on or off.
+			# # And off doesn't ruin the result as much as laser on
+			# self.sendCommand("M5")
+			# if not recover.is_empty():
+			# 	self.sendCommand(recover.buffer_cmds[0])
+			# 	recover.remove()
+			#
+			# # now that we're at the oldest know position, let's readjust laser and feedrate
+			# if not recover.is_empty():
+			# 	intensity = recover.buffer_intensity[0]
+			# 	feedrate = recover.buffer_feedrate[0]
+			# cmd = "M3F%dS%d\n" % (feedrate, intensity)
+			# self.sendCommand(cmd)
+			#
+			# # and then let's fire the first command that goes with these settings
+			# self.sendCommand(recover.buffer_cmds[0])
+			# recover.remove()
+			#
+			# # and from here it's a simple replay...
+			# while not recover.is_empty():
+			# 	c = recover.buffer_cmds[0]
+			# 	self.sendCommand(c, processed=False)
+			# 	recover.remove()
+
+			self._logger.info("Recovery: done", terminal_as_comm=True)
+			self._logger.info("ANDYTEST recover: DONE")
+			self._recovering = False
+		except:
+			self._logger.exception("Exception in threded method _recover_from_error_in_separate_thread(): ")
+			errorMsg = "Error during recovery. See octoprint.log for details"
+			self._log(errorMsg)
+			self._errorValue = errorMsg
+			self._changeState(self.STATE_ERROR)
+			eventManager().fire(OctoPrintEvents.ERROR, {"error": self.getErrorString()})
+			self._logger.dump_terminal_buffer(level=logging.ERROR)
 
 
 	def correct_grbl_settings(self, retries=3):
@@ -737,7 +972,6 @@ class MachineCom(object):
 			if self._currentFile is not None:
 				self._currentFile.close()
 			self._log("entered state closed / closed with error. reseting character counter.")
-			self.acc_line_lengths = []
 
 		oldState = self.getStateString()
 		self._state = newState
@@ -1017,9 +1251,11 @@ class MachineCom(object):
 				# TODO replace with value from printer profile
 				if temp > 5000:
 					temp = 5000
+					self._current_feedrate = int(temp)
 				elif temp < 30:
 					temp = 30
-				self.sendCommand('F%d' % round(temp))
+					self._current_feedrate = int(temp)
+				self.sendCommand('F%d' % self._current_feedrate)
 
 	def _set_intensity_override(self, value):
 		temp = value / 100.0
@@ -1039,6 +1275,7 @@ class MachineCom(object):
 		if obj is not None:
 			feedrate_cmd = cmd[obj.start():obj.end()]
 			self._actual_feedrate = int(feedrate_cmd[1:])
+			self._current_feedrate = self._actual_feedrate
 			if self._feedrate_factor != 1:
 				if feedrate_cmd in self._feedrate_dict:
 					new_feedrate = self._feedrate_dict[feedrate_cmd]
@@ -1050,7 +1287,8 @@ class MachineCom(object):
 					elif new_feedrate < 30:
 						new_feedrate = 30
 					self._feedrate_dict[feedrate_cmd] = new_feedrate
-				return cmd.replace(feedrate_cmd, 'F%d' % round(new_feedrate))
+				self._current_feedrate = int(new_feedrate)
+				return cmd.replace(feedrate_cmd, 'F%d' % self._current_feedrate)
 		return cmd
 
 	def _replace_intensity(self, cmd):
@@ -1076,26 +1314,66 @@ class MachineCom(object):
 				return cmd.replace(intensity_cmd, 'S%d' % self._current_intensity)
 		return cmd
 
+	def _parse_vals_from_gcode(self, cmd):
+		data =dict(
+			x=None,
+			y=None,
+			# can easily be extended to also find S and F: simply add these letters to the regexp...
+			# i=None,
+			# f=None
+		)
+		matches = self._regex_gcode.findall(cmd)
+		if matches:
+			for group in matches:
+				data[group[0].lower()] = group[1]
+		return data
+
+	def _remember_pos(self, x, y):
+		if x is not None:
+			try:
+				self._current_pos_x = float(x)
+			except:
+				self._logger.warn("_remember_pos() Unable to transform '%s' to float for pos_x", x)
+		if y is not None:
+			try:
+				self._current_pos_y = float(y)
+			except:
+				self._logger.warn("_remember_pos() Unable to transform '%s' to float for pos_y", y)
+
 	##~~ command handlers
+	def _gcode_G0_sending(self, cmd, cmd_type=None):
+		data = self._parse_vals_from_gcode(cmd)
+		self._remember_pos(data['x'], data['y'])
+
 	def _gcode_G1_sending(self, cmd, cmd_type=None):
+		data = self._parse_vals_from_gcode(cmd)
+		self._remember_pos(data['x'], data['y'])
 		cmd = self._replace_feedrate(cmd)
 		cmd = self._replace_intensity(cmd)
 		return cmd
 
 	def _gcode_G2_sending(self, cmd, cmd_type=None):
+		data = self._parse_vals_from_gcode(cmd)
+		self._remember_pos(data['x'], data['y'])
 		cmd = self._replace_feedrate(cmd)
 		cmd = self._replace_intensity(cmd)
 		return cmd
 
 	def _gcode_G3_sending(self, cmd, cmd_type=None):
+		data = self._parse_vals_from_gcode(cmd)
+		self._remember_pos(data['x'], data['y'])
 		cmd = self._replace_feedrate(cmd)
 		cmd = self._replace_intensity(cmd)
 		return cmd
 
 	def _gcode_M3_sending(self, cmd, cmd_type=None):
+		self._current_laser_on = True
 		cmd = self._replace_feedrate(cmd)
 		cmd = self._replace_intensity(cmd)
 		return cmd
+
+	def _gcode_M5_sending(self, cmd, cmd_type=None):
+		self._current_laser_on = False
 
 	def _gcode_G01_sending(self, cmd, cmd_type=None):
 		return self._gcode_G1_sending(cmd, cmd_type)
@@ -1108,6 +1386,9 @@ class MachineCom(object):
 
 	def _gcode_M03_sending(self, cmd, cmd_type=None):
 		return self._gcode_M3_sending(cmd, cmd_type)
+
+	def _gcode_M05_sending(self, cmd, cmd_type=None):
+		return self._gcode_M5_sending(cmd, cmd_type)
 
 	def _gcode_X_sent(self, cmd, cmd_type=None):
 		# since we use $X to rescue from homeposition, we don't want this to trigger homing
@@ -1283,7 +1564,7 @@ class MachineCom(object):
 		self._cmd = None
 
 		self._sendCommand(self.COMMAND_RESET)
-		self._acc_line_buffer = []
+		self._acc_line_buffer.reset()
 		self._send_event.clear(completely=True)
 		self._changeState(self.STATE_LOCKED)
 
@@ -1658,6 +1939,206 @@ class PrintingGcodeFileInformation(PrintingFileInformation):
 			self._logger.exception("Exception while processing line")
 			raise e
 
+
+class AccLineBuffer(object):
+
+	DEFAULT_HISTORY_LENGTH = 3
+
+	def __init__(self, history_size=None):
+		self._lock = RWLock()
+		self.buffer_cmds = collections.deque()
+		self.history = collections.deque(maxlen=(history_size or self.DEFAULT_HISTORY_LENGTH))
+		self.char_len = -1
+		self.id = 0
+
+	def reset(self):
+		self._lock.writer_acquire()
+		self.buffer_cmds.clear()
+		self.history.clear()
+		self._reset_char_len()
+		self.id = 0
+		self._lock.writer_release()
+
+	def add(self, cmd, intensity, feedrate, pos_x, pos_y, laser):
+		"""
+		Add a new command (item)
+		:param cmd:
+		:param intensity: (optional) intensity BEFORE this command is executed
+		:param feedrate: (optional) feedrate BEFORE this command is executed
+		"""
+		self._lock.writer_acquire()
+		d = dict(
+			cmd=cmd,
+			i=intensity,
+			f=feedrate,
+			x=pos_x,
+			y=pos_y,
+			l=laser,
+			id=self.id
+		)
+		self.id += 1
+		self.buffer_cmds.append(d)
+		self._reset_char_len()
+		self._lock.writer_release()
+
+	def remove(self, skip_history=False):
+		"""
+		Remove the oldest command (item) from buffer
+		Will be put into history
+		and is ignored in get_command_count() and is_empty() and get_char_len()
+		:param skip_history: (optional) boolean. If True item won't be put into history
+		"""
+		if not self.is_empty():
+			self._lock.writer_acquire()
+			item = self.buffer_cmds.popleft()
+			self._reset_char_len()
+			if not skip_history:
+				self.history.append(item)
+			self._lock.writer_release()
+			return item
+
+	def get_first_item(self):
+		"""
+		Returns the first (oldest) item (ignoring history). This is the one to be removed next.
+		:return: item dict(cmd="", i=1, f=23) or None if empty
+		"""
+		if self.is_empty():
+			return None
+		self._lock.reader_acquire()
+		res =  self.buffer_cmds[0]
+		self._lock.reader_release()
+		return res
+
+	def get_last_confirmed_item(self):
+		self._lock.reader_acquire()
+		res = None
+		if len(self.history) > 0:
+			res = self.history[len(self.history)-1]
+		self._lock.reader_release()
+		return res
+
+	# def get_items(self):
+	# 	"""
+	# 	Get bufferes items
+	# 	:param num:
+	# 	:return:
+	# 	"""
+	# 	return list(self.buffer_cmds)
+
+	# def get_history(self):
+	# 	"""
+	# 	Get items in history. First item in list will be the oldest item.
+	# 	:param num: (optional) number of items of how many steps you want to look into the past. EG: If num set to 3 you will get the 3 most recent items form history.
+	# 	:return: list of items
+	# 	"""
+	# 	return list(self.history)
+
+	# def get_recovery_length(self):
+	# 	return len(self.history) + len(self.buffer_cmds)
+
+
+	def get_recovery_steps(self):
+		self._lock.reader_acquire()
+		res = list(self.history)
+		res.extend(self.buffer_cmds)
+		self._lock.reader_release()
+		return res
+
+	# def get_history_item(self, i):
+	# 	return self.history[i]
+
+	# def get_historic_intensity(self):
+	# 	"""
+	# 	Returns the oldest available intensity value or None
+	# 	:return: intensity value or None
+	# 	"""
+	# 	if len(self.history) > 0:
+	# 		return self.history[0]['i']
+	# 	elif len(self.buffer_cmds) > 0:
+	# 		return self.buffer_cmds[0]['i']
+	# 	else:
+	# 		return None
+	#
+	# def get_historic_feedreate(self):
+	# 	"""
+	# 	Returns the oldest available feedrate value or None
+	# 	:return: feedrate value or None
+	# 	"""
+	# 	if len(self.history) > 0:
+	# 		return self.history[0]['f']
+	# 	elif len(self.buffer_cmds) > 0:
+	# 		return self.buffer_cmds[0]['f']
+	# 	else:
+	# 		return None
+
+	def get_command_count(self):
+		"""
+		Number of commands in buffer (ignores history)
+		:return: int length
+		"""
+		self._lock.reader_acquire()
+		res = len(self.buffer_cmds)
+		self._lock.reader_release()
+		return res
+
+	# def get_history_count(self):
+	# 	"""
+	# 	returns the number of items in history
+	# 	:return:
+	# 	"""
+	# 	return len(self.history)
+
+	def is_empty(self):
+		"""
+		True if the buffer is empty
+		:return: boolean
+		"""
+		self._lock.reader_acquire()
+		res = len(self.buffer_cmds) == 0
+		self._lock.reader_release()
+		return res
+
+	def get_char_len(self):
+		"""
+		Character count of all commands in buffer (ignores history)
+		:return:
+		"""
+		self._lock.reader_acquire()
+		if self.char_len < 0:
+			self.char_len = sum([len(x['cmd']) for x in self.buffer_cmds])
+		res = self.char_len
+		self._lock.reader_release()
+		return res
+
+	# def clone(self):
+	# 	"""
+	# 	Clones this object. Both objects operate independently.
+	# 	:return: A new object with same values.
+	# 	"""
+	# 	nu = AccLineBuffer()
+	# 	nu.buffer_cmds.extend(self.buffer_cmds)
+	# 	nu.history.extend(self.history)
+	# 	return nu
+
+	def _reset_char_len(self):
+		self.char_len = -1
+
+	def __str__(self):
+		self._lock.reader_acquire()
+		buffer = []
+		for c in self.buffer_cmds:
+			buffer.append(self._item_as_str(c))
+		history = []
+		for c in self.history:
+			history.append(self._item_as_str(c))
+		self._lock.reader_release()
+		return "{{[buffer_cmds({len}):{buffer}], [history:{history}]}}".format(len=self.get_command_count(), buffer=", ".join(buffer), history=", ".join(history))
+
+	def _item_as_str(self, item):
+		item['cmd'] = item['cmd'].strip() if item is not None else None
+		return "{{{id}: {cmd} (pos:{x},{y}, f:{f},i:{i},{laser})}}".format(id=item['id'], cmd=item['cmd'], x=item['x'], y=item['y'], i=item['i'], f=item['i'], laser='ON' if item['l'] else 'OFF')
+
+
 def convert_pause_triggers(configured_triggers):
 	triggers = {
 		"enable": [],
@@ -1748,3 +2229,5 @@ def baudrateList():
 		ret.remove(prev)
 		ret.insert(0, prev)
 	return ret
+
+
