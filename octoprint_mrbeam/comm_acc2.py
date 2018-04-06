@@ -35,6 +35,8 @@ from octoprint_mrbeam.lib.rwlock import RWLock
 ### MachineCom #########################################################################################################
 class MachineCom(object):
 
+	RECOVERY_ON_ERROR = False
+
 	GRBL_VERSION_20170919_22270fa = '0.9g_22270fa'
 	GRBL_VERSION_20180223_61638c5 = '0.9g_20180223_61638c5'
 
@@ -566,8 +568,12 @@ class MachineCom(object):
 			return
 		if "Invalid gcode ID:24" in line:
 			self._logger.error("Error detected: Invalid gcode ID:24!!!!!")
-			self._recover_from_error()
-			# self._logger.dump_terminal_buffer(level=logging.ERROR)
+			if RECOVERY_ON_ERROR:
+				self._recover_from_error()
+			else:
+				self._errorValue = line
+				eventManager().fire(OctoPrintEvents.ERROR, {"error": self.getErrorString()})
+				self._logger.dump_terminal_buffer(level=logging.ERROR)
 			return
 		self._errorValue = line
 		eventManager().fire(OctoPrintEvents.ERROR, {"error": self.getErrorString()})
@@ -724,7 +730,7 @@ class MachineCom(object):
 			            pos_y=self._current_pos_y,
 			            laser=self._current_laser_on
 			            )
-			
+
 		wait_time = 3.0 # TODO ANDYTEST
 		recovering_thread = threading.Timer(3.0, self._recover_from_error_in_separate_thread, args=[history, culpit])
 		recovering_thread.name = "comm._recovery_thread"
