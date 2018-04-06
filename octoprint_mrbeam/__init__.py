@@ -12,6 +12,7 @@ import time
 import shlex
 import collections
 import re
+import netifaces
 from subprocess import check_output
 
 import octoprint.plugin
@@ -236,7 +237,7 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 				localFilePath="cam/beam-cam.jpg",
 				localUndistImage="cam/undistorted.jpg",
 				keepOriginals=False,
-				# TODO: we nee a better and unified solution for our custom paths. Some day...
+				# TODO: we need a better and unified solution for our custom paths. Some day...
 				correctionSettingsFile='{}/cam/pic_settings.yaml'.format(settings().getBaseFolder('base')),
 				correctionTmpFile='{}/cam/last_markers.json'.format(settings().getBaseFolder('base')),
 				lensCalibrationFile='{}/cam/lens_correction_{}x{}.npz'.format(settings().getBaseFolder('base'), image_default_width, image_default_height),
@@ -379,6 +380,7 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 							 beta_label=self.get_beta_label(),
 							 terminalEnabled=self._settings.get(['terminal']) or self.support_mode,
 							 vorlonEnabled=self.is_vorlon_enabled(),
+							 ip_address_eth0 = self._get_ip_address('eth0')
 						 ))
 		r = make_response(render_template("mrbeam_ui_index.jinja2", **render_kwargs))
 
@@ -1569,16 +1571,6 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 
 	def get_octopi_info(self):
 		return self._get_val_from_device_info('octopi')
-		# try:
-		# 	with open('/etc/octopi_flavor', 'r') as myfile:
-		# 		flavor = myfile.read().replace('\n', '')
-		# 	with open('/etc/octopi_datetime', 'r') as myfile:
-		# 		datetime = myfile.read().replace('\n', '')
-		# 	return "{} {}".format(flavor, datetime)
-		# except Exception as e:
-		# 	# self._logger.exception("Can't read OctoPi image info due to exception:", e)
-		# 	pass
-		# return None
 
 	def _get_val_from_device_info(self, key):
 		try:
@@ -1637,6 +1629,17 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 		else:
 			self._settings.set_boolean(['vorlon'], False, force=True)
 			return False
+
+	def _get_ip_address(self, interface):
+		"""
+		Returns the external IP address of the given interface
+		:param interface:
+		:return: String IP
+		"""
+		try:
+			return netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
+		except:
+			pass
 
 
 # # this is for the command line interface we're providing

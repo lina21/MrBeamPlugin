@@ -20,12 +20,14 @@
 
         // List of hostnames to test; url param is optional
         var forward_hosts = [
-                {host: "find.mr-beam.org",
-                 url: "http://find.mr-beam.org/img/ANDYTESTGIF.gif?_="+Date.now()},
-                {host: "MrBeam-B5CC.local"},
-                {host: "MrBeam-B5CC"},
+                {host: "find.mr-beam.org", url: "http://find.mr-beam.org/img/ping_ap_mode.gif?_="+Date.now()},
+                {host: MRBEAM_DISPLAY_NAME + ".local"},
+                {host: MRBEAM_DISPLAY_NAME},
                 {host: "10.250.250.1"}
                 ]
+        if (MRBEAM_IP_ETH0) {
+            forward_hosts.push(MRBEAM_IP_ETH0);
+        }
 
         // timeout for each test request. requests are done in parallel
         var urlCheckTimeout = 8000;
@@ -62,7 +64,7 @@
                 for (var i=0; i<hostsToTest.length; i++) {
                     var my_test = hostsToTest[i]
                     if (!my_test.url) {
-                        my_test.url = "http://"+my_test.host+":80/plugin/findmymrbeam/ANDYTESTGIF.gif?_="+Date.now()
+                        my_test.url = "http://"+my_test.host+":80/plugin/findmymrbeam/ping_ap_mode.gif?_="+Date.now()
                     }
                     my_test.pending = true,
                     my_test.success = null,
