@@ -59,6 +59,12 @@ class Laser(Printer):
 	def is_operational(self):
 		return Printer.is_operational(self) or self.is_locked()
 
+	def is_paused(self):
+		return self._comm is not None and self._comm.isPaused()
+
+	def is_ready_to_laser(self):
+		return self._comm is not None and self._comm.isReadyToLaser()
+
 	# send color settings to commAcc to inject settings into Gcode
 	def set_colors(self, currentFileName,value):
 		if self._comm is None:
@@ -77,14 +83,17 @@ class Laser(Printer):
 		command = "G92X{x}Y{y}Z{z}".format(**params)
 		self.commands(["$H", command, "G90", "G21"])
 
-	def cancel_print(self):
+	def cancel_print(self, ready_to_laser_mode_cancel=False):
 		"""
 		 Cancel the current printjob and do homing.
 		"""
-		super(Laser, self).cancel_print()
+		if self._comm is None:
+			return
+		self._comm.cancelPrint(ready_to_laser_mode_cancel=ready_to_laser_mode_cancel)
 		time.sleep(0.5)
 		self.home(axes="wtf")
-		eventManager().fire(MrBeamEvents.PRINT_CANCELING_DONE)
+		if not ready_to_laser_mode_cancel:
+			eventManager().fire(MrBeamEvents.PRINT_CANCELING_DONE)
 
 	def position(self, x, y):
 		printer_profile = self._printerProfileManager.get_current_or_default()
@@ -138,6 +147,18 @@ class Laser(Printer):
 			return
 
 		self._comm.setPause(True, send_cmd=True, trigger=trigger)
+
+	def resume_print(self, ready_to_laser_mode=False, trigger=None):
+		"""
+		Resume the current printjob.
+		"""
+		if self._comm is None:
+			return
+
+		if not self._comm.isPaused():
+			return
+
+		self._comm.setPause(False, ready_to_laser_mode=ready_to_laser_mode, trigger=trigger)
 
 	def cooling_start(self):
 		"""
@@ -230,6 +251,9 @@ class LaserStateMonitor(StateMonitor):
 		data = StateMonitor.get_current_data(self)
 		data.update({
 			"workPosition": self._workPosition,
-			"machinePosition": self._machinePosition
+			"machinePosition": self._machinePosition,
 		})
+		mrb_state = _mrbeam_plugin_implementation._oneButtonHandler.get_state()
+		if mrb_state:
+			data['mrb_state'] = mrb_state
 		return data

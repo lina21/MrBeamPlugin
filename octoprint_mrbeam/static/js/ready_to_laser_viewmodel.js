@@ -17,9 +17,12 @@ $(function() {
         self.gcodeFile = undefined;
 
         self.interlocks_closed = ko.observable(true);
-        self.is_pause_mode = ko.observable(false);
         self.is_cooling_mode = ko.observable(false);
         self.is_fan_connected = ko.observable(true);
+        self.is_rtl_mode = ko.observable(false);
+
+        // TODO remove ANDYTEST
+//        self.is_pause_mode = ko.observable(false);
 
         self.DEBUG = false;
 
@@ -64,7 +67,7 @@ $(function() {
                 });
 
                 self.dialogElement.on('hide', function () {
-                    self._setReadyToLaserCancel();
+                    self._setReadyToLaserCancel(true);
                     if (self.dialogShouldBeOpen != false) {
                         if (typeof e !== "undefined") {
                             self._debugDaShit("on(hide) skip");
@@ -106,90 +109,90 @@ $(function() {
                 };
 
                 self.onEventPrintPaused = function (payload) {
-                    var cooling = (payload && payload['cooling']);
-                    console.log("ANDYTEST onEventPrintPaused() cooling:", cooling);
-                    self.is_cooling_mode(cooling);
-                    self._set_paused();
+                    self._fromData(payload);
+                    self.showDialog();
                 };
 
                 self.onEventPrintResumed = function (payload) {
-                    var cooling = (payload && payload['cooling']);
-                    console.log("ANDYTEST onEventPrintResumed() from cooling:", cooling);
-                    self.is_cooling_mode(false);
-                    self._unset_paused();
+                    self.hideDialog();
                 };
 
                 self.onEventPrintCancelled = function (payload) {
-                    self._debugDaShit("onEventPrintCanceled() payload: ", payload);
+//                    self._debugDaShit("onEventPrintCanceled() payload: ", payload);
                     self._setReadyToLaserCancel(false);
+//                    self.hideDialog();
                 };
 
-                // this is listening for data coming through the socket connection
-                self.onDataUpdaterPluginMessage = function(plugin, data) {
-                    if (plugin != "mrbeam") {
-                        return;
-                    }
-
-                    self._debugDaShit("onDataUpdaterPluginMessage() ", data);
-
-                    if (!data) {
-                        console.warn("onDataUpdaterPluginMessage() received empty data for plugin '"+mrbeam+"'");
-                        return;
-                    }
-
-                    if ('ready_to_laser' in data && data.ready_to_laser.startsWith("end")) {
-                        console.log("ReadyToLaser state was ended by the server. data.ready_to_laser=", data.ready_to_laser);
-                        //self._setReadyToLaserCancel(false);
-
-                        if (data.ready_to_laser == "end_lasering") {
-                            new PNotify({
-                                title: gettext("Laser Started"),
-                                text: _.sprintf(gettext("It's real laser, baby!!! Be a little careful, don't leave Mr Beam alone...")),
-                                type: "success"
-                            });
-                        }
-                    } else if ('ready_to_laser' in data && data.ready_to_laser.startsWith("start")) {
-                        console.log("ReadyToLaser state was started by the server. data.ready_to_laser=", data.ready_to_laser);
-                        if (data.ready_to_laser == "start_pause") {
-                            self._set_paused();
-                        } else {
-                            self.showDialog();
-                        }
-                    }
-
-                    if ('interlocks_closed' in data) {
-                        self.interlocks_closed(Boolean(data.interlocks_closed));
-                    }
-
-                    if ('cooling' in data) {
-                        self.is_cooling_mode(data['cooling'])
-                    }
-
-                    if ('status' in data) {
-                        // STATUS is a global varibale that collects all status values for important reasons... (because we can).
-                        if (typeof STATUS == 'undefined') {
-                            STATUS = {};
-                        }
-                        if ('laser_temperature' in data['status']) {
-                            STATUS['laser_temperature'] = data['status']['laser_temperature'];
-                        }
-                        if ('fan_connected' in data['status']) {
-                            if (data['status']['fan_connected'] !== null) {
-                                self.is_fan_connected(data['status']['fan_connected']);
-                            }
-                            STATUS['fan_connected'] = data['status']['fan_connected'];
-                        }
-                        if ('fan_state' in data['status']) {
-                            STATUS['fan_state'] = data['status']['fan_state'];
-                        }
-                        if ('fan_rpm' in data['status']) {
-                            STATUS['fan_rpm'] = data['status']['fan_rpm'];
-                        }
-                        if ('fan_dust' in data['status']) {
-                            STATUS['fan_dust'] = data['status']['fan_dust'];
-                        }
-                    }
+                self.fromCurrentData = function(data) {
+                    self._fromData(data);
                 };
+
+//                // this is listening for data coming through the socket connection
+//                self.onDataUpdaterPluginMessage = function(plugin, data) {
+//                    if (plugin != "mrbeam") {
+//                        return;
+//                    }
+//
+//                    self._debugDaShit("onDataUpdaterPluginMessage() ", data);
+//
+//                    if (!data) {
+//                        console.warn("onDataUpdaterPluginMessage() received empty data for plugin '"+mrbeam+"'");
+//                        return;
+//                    }
+//
+//                    if ('ready_to_laser' in data && data.ready_to_laser.startsWith("end")) {
+//                        console.log("ReadyToLaser state was ended by the server. data.ready_to_laser=", data.ready_to_laser);
+//                        //self._setReadyToLaserCancel(false);
+//
+//                        if (data.ready_to_laser == "end_lasering") {
+//                            new PNotify({
+//                                title: gettext("Laser Started"),
+//                                text: _.sprintf(gettext("It's real laser, baby!!! Be a little careful, don't leave Mr Beam alone...")),
+//                                type: "success"
+//                            });
+//                        }
+//                    } else if ('ready_to_laser' in data && data.ready_to_laser.startsWith("start")) {
+//                        console.log("ReadyToLaser state was started by the server. data.ready_to_laser=", data.ready_to_laser);
+//                        if (data.ready_to_laser == "start_pause") {
+//                            self._set_paused();
+//                        } else {
+//                            self.showDialog();
+//                        }
+//                    }
+//
+//                    if ('interlocks_closed' in data) {
+//                        self.interlocks_closed(Boolean(data.interlocks_closed));
+//                    }
+//
+//                    if ('cooling' in data) {
+//                        self.is_cooling_mode(data['cooling'])
+//                    }
+//
+//                    if ('status' in data) {
+//                        // STATUS is a global varibale that collects all status values for important reasons... (because we can).
+//                        if (typeof STATUS == 'undefined') {
+//                            STATUS = {};
+//                        }
+//                        if ('laser_temperature' in data['status']) {
+//                            STATUS['laser_temperature'] = data['status']['laser_temperature'];
+//                        }
+//                        if ('fan_connected' in data['status']) {
+//                            if (data['status']['fan_connected'] !== null) {
+//                                self.is_fan_connected(data['status']['fan_connected']);
+//                            }
+//                            STATUS['fan_connected'] = data['status']['fan_connected'];
+//                        }
+//                        if ('fan_state' in data['status']) {
+//                            STATUS['fan_state'] = data['status']['fan_state'];
+//                        }
+//                        if ('fan_rpm' in data['status']) {
+//                            STATUS['fan_rpm'] = data['status']['fan_rpm'];
+//                        }
+//                        if ('fan_dust' in data['status']) {
+//                            STATUS['fan_dust'] = data['status']['fan_dust'];
+//                        }
+//                    }
+//                };
 
             } // end if oneButton
         }; // end onStartupComplete
@@ -205,32 +208,54 @@ $(function() {
         // bound to both cancel buttons
         self.cancel_btn = function(){
             self._debugDaShit("cancel_btn() ");
-            if (self.is_pause_mode() || self.is_cooling_mode()) {
-                self.state.cancel();
-            } else {
+            if (self.is_rtl_mode()){
                 self._setReadyToLaserCancel(true);
+            } else {
+                self.state.cancel();
             }
         };
 
-        self._set_paused = function(){
-            self.is_pause_mode(true);
-            self.showDialog();
-        };
+        self._fromData = function(payload) {
+            var mrb_state = payload['mrb_state'];
+            if (mrb_state) {
+                window.mrbeam.mrb_state = mrb_state;
 
-        self._unset_paused = function(){
-            self.is_pause_mode(false);
-            self.hideDialog()
-        };
+                if ('interlocks_closed' in mrb_state) {
+                    self.interlocks_closed(mrb_state['interlocks_closed'])
+                }
+                if ('cooling_mode' in mrb_state) {
+                    self.is_cooling_mode(mrb_state['cooling_mode'])
+                }
+                if ('fan_connected' in mrb_state) {
+                    if (mrb_state['fan_connected'] !== null) {
+                        self.is_fan_connected(mrb_state['fan_connected'])
+                    }
+                }
+                if ('rtl_mode' in mrb_state) {
+                    self.is_rtl_mode(mrb_state['rtl_mode'])
+                }
+            }
+            console.log("_fromData() interlocks_closed: "+self.interlocks_closed()+", is_cooling_mode: "+self.is_cooling_mode()+", is_fan_connected: "+self.is_fan_connected() +", is_rtl_mode: "+self.is_rtl_mode());
+        }
+
+//        self._set_paused = function(){
+//            self.showDialog();
+//        };
+//
+//        self._unset_paused = function(){
+//            self.hideDialog()
+//        };
 
         self._setReadyToLaserCancel = function(notifyServer){
             notifyServer = notifyServer == false ? false : true // true if undefined
             self._debugDaShit("_setReadyToLaserCancel() notifyServer: ", notifyServer)
             self.hideDialog();
             if (notifyServer) {
-                self._sendReadyToLaserRequest(false);
+                self._sendCancelReadyToLaserMode();
+//                self._sendReadyToLaserRequest(false);
             }
             self.gcodeFile = undefined;
-            self.is_pause_mode(false)
+//            self.is_pause_mode(false)
         };
 
         self.showDialog = function(force) {
@@ -238,7 +263,7 @@ $(function() {
             self.dialogShouldBeOpen = true;
             if ((!self.dialogIsInTransition && !self.dialogElement.hasClass('in')) || force) {
                 var param = 'show'
-                if (self.is_pause_mode()) {
+                if (!self.is_rtl_mode()) {
                     // not dismissable in paused mode
                     param = {backdrop: 'static', keyboard: (MRBEAM_ENV_LOCAL == "DEV")}
                 }
@@ -268,6 +293,11 @@ $(function() {
                 self._debugDaShit("hideDialog() skip");
             }
         };
+
+        self._sendCancelReadyToLaserMode = function() {
+            data = {rtl_cancel: true}
+            OctoPrint.simpleApiCommand("mrbeam", "ready_to_laser", data);
+        }
 
         self._sendReadyToLaserRequest = function(ready, dev_start_button) {
             data = {gcode: self.gcodeFile, ready: ready}

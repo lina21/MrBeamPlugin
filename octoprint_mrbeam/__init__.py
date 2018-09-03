@@ -1160,13 +1160,14 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 			passes=["value"],
 			lasersafety_confirmation=[],
 			camera_calibration_markers=["result"],
-			ready_to_laser=["ready"],
+			ready_to_laser=[],
 			debug_event=["event"],
 			custom_materials=[],
 			take_undistorted_picture=[]  # see also takeUndistortedPictureForInitialCalibration() which is a BluePrint route
 		)
 
 	def on_api_command(self, command, data):
+		self._logger.info("ANDYTEST on_api_command() data: %s", data)
 		if command == "position":
 			if isinstance(data["x"], (int, long, float)) and isinstance(data["y"], (int, long, float)):
 				self._printer.position(data["x"], data["y"])
@@ -1207,12 +1208,14 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 		if 'dev_start_button' in data and data['dev_start_button']:
 			if self.get_env(self.ENV_LOCAL).lower() == 'dev':
 				self._logger.info("DEV dev_start_button pressed.")
-				self._event_bus.fire(IoBeamEvents.ONEBUTTON_RELEASED, 1.1)
+				self._event_bus.fire(IoBeamEvents.ONEBUTTON_RELEASED, 0.666)
 			else:
 				self._logger.warn("DEV dev_start_button used while we're not in DEV mode. (ENV_LOCAL)")
 				return make_response("BAD REQUEST - DEV mode only.", 400)
-		elif 'ready' not in data or not data['ready']:
-			self._oneButtonHandler.unset_ready_to_laser()
+		# elif 'ready' not in data or not data['ready']:
+		# 	self._oneButtonHandler.unset_ready_to_laser()
+		elif 'rtl_cancel' in data and data['rtl_cancel']:
+			self._printer.cancel_print(ready_to_laser_mode_cancel=True)
 
 		return NO_CONTENT
 

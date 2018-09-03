@@ -27,6 +27,7 @@ from octoprint.filemanager.destinations import FileDestinations
 from octoprint.util import get_exception_string, RepeatedTimer, CountedEvent, sanitize_ascii
 
 from octoprint_mrbeam.mrb_logger import mrb_logger
+from octoprint_mrbeam.mrbeam_events import MrBeamEvents
 from octoprint_mrbeam.analytics.analytics_handler import existing_analyticsHandler
 from octoprint_mrbeam.util.cmd_exec import exec_cmd_output
 
@@ -54,7 +55,7 @@ class MachineCom(object):
 	STATE_LOCKED = 12
 	STATE_HOMING = 13
 	STATE_FLASHING = 14
-	STATE_READY_TO_LASER = 15
+	# STATE_READY_TO_LASER = 15
 
 	GRBL_STATE_QUEUE = 'Queue'
 	GRBL_STATE_IDLE  = 'Idle'
@@ -118,6 +119,7 @@ class MachineCom(object):
 		self._send_event = CountedEvent(max=50)
 		self._finished_currentFile = False
 		self._pause_delay_time = 0
+		self._ready_to_laser_flag = False
 		self._feedrate_factor = 1
 		self._actual_feedrate = None
 		self._intensity_factor = 1
@@ -230,7 +232,7 @@ class MachineCom(object):
 		while self._sending_active:
 			try:
 				self._process_rt_commands()
-				self._logger.info("ANDYTEST _send_loop() isPrinting: %s, _commandQueue.empty: %s", self.isPrinting(), self._commandQueue.empty())
+				# self._logger.info("ANDYTEST _send_loop() isPrinting: %s, _commandQueue.empty: %s", self.isPrinting(), self._commandQueue.empty())
 				if self.isPrinting() and self._commandQueue.empty():
 					cmd = self._getNext()
 					self._logger.info("ANDYTEST _send_loop() cmd: %s", cmd)
@@ -263,12 +265,12 @@ class MachineCom(object):
 	def _sendCommand(self, cmd=None):
 		if cmd is None:
 			if self._cmd is None and self._commandQueue.empty():
-				self._logger.info("ANDYTEST _sendCommand() nothing to do")
+				# self._logger.info("ANDYTEST _sendCommand() nothing to do")
 				return
 			elif self._cmd is None:
 				self._cmd = self._commandQueue.get()
 
-			self._logger.info("ANDYTEST _sendCommand() self._cmd: %s", self._cmd)
+			# self._logger.info("ANDYTEST _sendCommand() self._cmd: %s", self._cmd)
 
 			if self._cmd == self.COMMAND_FLUSH:
 				# FLUSH waits until we're no longer waiting for any OKs from GRBL
@@ -313,7 +315,7 @@ class MachineCom(object):
 				if sum([len(x) for x in self._acc_line_buffer]) + len(my_cmd) +1 < self.WORKING_RX_BUFFER_SIZE:
 					my_cmd, _, _  = self._process_command_phase("sending", my_cmd)
 					self._log("Send: %s" % my_cmd)
-					self._logger.info("ANDYTEST Send: %s" % my_cmd)
+					# self._logger.info("ANDYTEST Send: %s" % my_cmd)
 					self._acc_line_buffer.append(my_cmd + '\n')
 					try:
 						self._serial.write(my_cmd + '\n')
@@ -511,7 +513,7 @@ class MachineCom(object):
 						self._logger.dump_terminal_buffer(logging.WARN)
 		elif self._grbl_state == self.GRBL_STATE_RUN or self._grbl_state == self.GRBL_STATE_IDLE:
 			if time.time() - self._pause_delay_time > 0.3:
-				if self.isPaused():
+				if self.isPaused() and not self._ready_to_laser_flag:
 					self._logger.warn("_handle_status_report() Unpausing since we got status '%s' from grbl.", self._grbl_state)
 					self.setPause(False, send_cmd=False, trigger="GRBL_RUN")
 
@@ -1003,6 +1005,9 @@ class MachineCom(object):
 		self.sendCommand('G90')
 		self.sendCommand(self.COMMAND_FLUSH)
 		time.sleep(1) # turns out we need this :-/ Maybe SYNC will solve once SYNC is fully working
+		# reset limit timers
+		self.limit_x = -1
+		self.limit_y = -1
 
 
 	def _handle_command_handler_result(self, command, command_type, gcode, handler_result):
@@ -1142,7 +1147,8 @@ class MachineCom(object):
 		return cmd
 
 	def _gcode_Hold_sent(self, cmd, cmd_type=None):
-		self._changeState(self.STATE_PAUSED)
+		if not self.isReadyToLaser():
+			self._changeState(self.STATE_PAUSED)
 		return cmd
 
 	def _gcode_Resume_sent(self, cmd, cmd_type=None):
@@ -1288,16 +1294,18 @@ class MachineCom(object):
 			self._currentFile.start()
 			self._finished_currentFile = False
 
-			payload = {
-				"file": self._currentFile.getFilename(),
-				"filename": os.path.basename(self._currentFile.getFilename()),
-				"origin": self._currentFile.getFileLocation()
-			}
-			eventManager().fire(OctoPrintEvents.PRINT_STARTED, payload)
+			# payload = {
+			# 	"file": self._currentFile.getFilename(),
+			# 	"filename": os.path.basename(self._currentFile.getFilename()),
+			# 	"origin": self._currentFile.getFileLocation()
+			# }
+			# eventManager().fire(OctoPrintEvents.PRINT_STARTED, payload)
 
-			#self.sendCommand(self.COMMAND_HOLD)
-			# self.setPause(True, send_cmd=True, pause_for_cooling=False, trigger="PauseAtJobStart", force=False)
-			self._changeState(self.STATE_PRINTING)
+			# self.sendCommand(self.COMMAND_HOLD)
+			self.setPause(True, send_cmd=True, ready_to_laser_mode=True, pause_for_cooling=False, trigger="PauseAtJobStart", force=False)
+			# self._changeState(self.STATE_PRINTING)
+			_mrbeam_plugin_implementation._oneButtonHandler.set_ready_to_laser()
+
 		except:
 			self._logger.exception("Error while trying to start printing")
 			self._errorValue = get_exception_string()
@@ -1305,10 +1313,11 @@ class MachineCom(object):
 			eventManager().fire(OctoPrintEvents.ERROR, {"error": self.getErrorString()})
 			self._logger.dump_terminal_buffer(level=logging.ERROR)
 
-	def cancelPrint(self):
+	def cancelPrint(self, ready_to_laser_mode_cancel=False):
 		if not self.isOperational():
 			return
 
+	# if not ready_to_laser_mode_cancel:
 		# first pause (feed hold) bevore doing the soft reset in order to retain machine pos.
 		self._sendCommand(self.COMMAND_HOLD)
 		time.sleep(0.5)
@@ -1322,25 +1331,45 @@ class MachineCom(object):
 		self._send_event.clear(completely=True)
 		self._changeState(self.STATE_LOCKED)
 
+		self._ready_to_laser_flag = False
+
 		payload = {
 			"file": self._currentFile.getFilename(),
 			"filename": os.path.basename(self._currentFile.getFilename()),
 			"origin": self._currentFile.getFileLocation(),
-			"time": self.getPrintTime()
+			"time": self.getPrintTime(),
+			"mrb_state": self.get_mrb_state()
 		}
 		eventManager().fire(OctoPrintEvents.PRINT_CANCELLED, payload)
+		if ready_to_laser_mode_cancel:
+			eventManager().fire(MrBeamEvents.READY_TO_LASER_CANCELED, payload)
+			_mrbeam_plugin_implementation._oneButtonHandler.unset_ready_to_laser()
 
-	def setPause(self, pause, send_cmd=True, pause_for_cooling=False, trigger=None, force=False):
+
+	def setPause(self, pause, send_cmd=True, pause_for_cooling=False, ready_to_laser_mode=False, trigger=None, force=False):
+		self._logger.info("ANDYTEST setPause() pause: %s, send_cmd: %s, pause_for_cooling: %s, ready_to_laser_mode: %s, trigger: %s, force: %s", pause, send_cmd, pause_for_cooling, ready_to_laser_mode, trigger, force)
 		if not self._currentFile:
 			return
 
+		if ready_to_laser_mode:
+			force = True
+			send_cmd = True
+			if pause:
+				self._ready_to_laser_flag = True
+				event = OctoPrintEvents.PRINT_PAUSED
+				self._changeState(self.STATE_PAUSED)
+			else:
+				self._ready_to_laser_flag = False
+				event = OctoPrintEvents.PRINT_STARTED
+				self._changeState(self.STATE_PRINTING)
+
 		payload = {
 			"file": self._currentFile.getFilename(),
 			"filename": os.path.basename(self._currentFile.getFilename()),
 			"origin": self._currentFile.getFileLocation(),
-			"cooling": pause_for_cooling,
 			"trigger": trigger,
-			"time": self.getPrintTime()
+			"time": self.getPrintTime(),
+			"mrb_state": self.get_mrb_state()
 		}
 
 		if not pause and (self.isPaused() or force):
@@ -1348,11 +1377,14 @@ class MachineCom(object):
 				self._pauseWaitTimeLost = self._pauseWaitTimeLost + (time.time() - self._pauseWaitStartTime)
 				self._pauseWaitStartTime = None
 			self._pause_delay_time = time.time()
-			payload["time"] = self.getPrintTime() # we need the pasue time to be removed from time
+			payload["time"] = self.getPrintTime() # we need the pause time to be removed from time
 			if send_cmd is True:
 				self._real_time_commands['cycle_start']=True
 			self._send_event.set()
-			eventManager().fire(OctoPrintEvents.PRINT_RESUMED, payload)
+			if ready_to_laser_mode:
+				eventManager().fire(OctoPrintEvents.PRINT_STARTED, payload)
+			else:
+				eventManager().fire(OctoPrintEvents.PRINT_RESUMED, payload)
 		elif pause and (self.isPrinting() or force):
 			if not self._pauseWaitStartTime:
 				self._pauseWaitStartTime = time.time()
@@ -1361,6 +1393,15 @@ class MachineCom(object):
 				self._real_time_commands['feed_hold']=True
 			self._send_event.set()
 			eventManager().fire(OctoPrintEvents.PRINT_PAUSED, payload)
+
+	def get_mrb_state(self):
+		state_obj = {}
+		try:
+			state_obj = _mrbeam_plugin_implementation._oneButtonHandler.get_state()
+		except:
+			self._logger.exception("Can't get mrb_state object from oneButtonHandler. ")
+		return state_obj
+
 
 	def increasePasses(self):
 		self._passes += 1
@@ -1422,8 +1463,8 @@ class MachineCom(object):
 			return "Homing"
 		if self._state == self.STATE_FLASHING:
 			return "Flashing"
-		if self._state == self.STATE_READY_TO_LASER:
-			return "Ready to Start"
+		# if self._state == self.STATE_READY_TO_LASER:
+		# 	return "Ready to Start"
 		return "Unknown State (%d)" % (self._state)
 
 	def getPrintProgress(self):
@@ -1458,7 +1499,7 @@ class MachineCom(object):
 		return self._state == self.STATE_LOCKED
 
 	def isReadyToLaser(self):
-		return self._state == self.STATE_READY_TO_LASER
+		return self._state == self.STATE_PAUSED and self._ready_to_laser_flag
 
 	def isHoming(self):
 		return self._state == self.STATE_HOMING
