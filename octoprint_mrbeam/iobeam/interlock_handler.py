@@ -43,6 +43,7 @@ class InterLockHandler(object):
 
 
 	def send_state(self):
+		# TODO ANDYTEST
 		if self._plugin._ioBeam:
 			self._plugin_manager.send_plugin_message("mrbeam",
 							 dict(interlocks_closed=self._plugin._ioBeam.is_interlock_closed(),

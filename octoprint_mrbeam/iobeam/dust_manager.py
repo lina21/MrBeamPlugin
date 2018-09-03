@@ -69,6 +69,15 @@ class DustManager(object):
 
 		self._logger.debug("initialized!")
 
+	def get_fan_state(self):
+		return self._state
+
+	def get_fan_rpm(self):
+		return self._rpm
+
+	def get_dust(self):
+		return self._dust
+
 	def is_fan_connected(self):
 		return self._connected
 
@@ -81,7 +90,6 @@ class DustManager(object):
 		_mrbeam_plugin_implementation._ioBeam.subscribe(IoBeamValueEvents.FAN_OFF_RESPONSE, self._on_command_response)
 		_mrbeam_plugin_implementation._ioBeam.subscribe(IoBeamValueEvents.FAN_AUTO_RESPONSE, self._on_command_response)
 
-		_mrbeam_plugin_implementation._event_bus.subscribe(MrBeamEvents.READY_TO_LASER_START, self._onEvent)
 		_mrbeam_plugin_implementation._event_bus.subscribe(MrBeamEvents.READY_TO_LASER_START, self._onEvent)
 		_mrbeam_plugin_implementation._event_bus.subscribe(MrBeamEvents.READY_TO_LASER_CANCELED, self._onEvent)
 		_mrbeam_plugin_implementation._event_bus.subscribe(OctoPrintEvents.SLICING_DONE, self._onEvent)
@@ -315,6 +323,7 @@ class DustManager(object):
 		# must not call _start_timer()!!
 
 	def _send_status_to_frontend(self):
+		# TODO ANDYTEST
 		payload = dict(status=dict(
 			fan_state=self._state,
 			fan_rpm = self._rpm,

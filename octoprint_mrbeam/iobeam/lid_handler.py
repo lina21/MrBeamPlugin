@@ -97,6 +97,9 @@ class LidHandler(object):
 		elif event == OctoPrintEvents.SHUTDOWN:
 			self.shutdown()
 
+	def is_lid_open(self):
+		return not self._lid_closed
+
 	def _printerStateChanged(self,event,payload):
 		if payload['state_string'] == 'Operational':
 			# TODO CHECK IF CLIENT IS CONNECTED FOR REAL, with PING METHOD OR SIMILAR
