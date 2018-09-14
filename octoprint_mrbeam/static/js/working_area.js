@@ -1794,16 +1794,16 @@ $(function(){
                 design.misfit = true;
                 $('#'+design.id).addClass('misfit');
                 svg.addClass('misfit');
-                svg.selectAll('*').forEach(function(e){e.addClass('misfit')})
+                svg.selectAll('*').forEach(function(e){e.addClass('misfit'); });
                 svg.data('fitMatrix', fitMatrix);
             } else {
                 design.misfit = false;
                 $('#'+design.id).removeClass('misfit');
                 svg.removeClass('misfit');
-                svg.selectAll('*').forEach(function(e){e.removeClass('misfit')})
+                svg.selectAll('*').forEach(function(e){e.removeClass('misfit'); });
                 svg.data('fitMatrix', null);
             }
-		}
+		};
 
 		self._embedAllImages = function(svg, callback){
 

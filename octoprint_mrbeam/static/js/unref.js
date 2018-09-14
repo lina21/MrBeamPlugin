@@ -31,11 +31,11 @@ Snap.plugin(function (Snap, Element, Paper, global) {
 		var elements_to_replace = [];
 		var used_source_elements = [];
 		
-		// 1. find all <use> elements in subtree
-		if(elem.type === 'use'){
+		// 1. find all <use> or <symbol> elements in subtree
+		if(elem.type === 'use' || elem.type === 'symbol'){
 			elements_to_replace.push(elem);
 		} else {
-			elements_to_replace = elem.selectAll('use');
+			elements_to_replace = elem.selectAll('use, symbol');
 		}
 		
 		// 2. replace them and remember the referenced source elements
@@ -119,7 +119,8 @@ Snap.plugin(function (Snap, Element, Paper, global) {
 				if(attr[key]) new_attrs[key] = attr[key];
 			}
 		
-			var duplicate = src_elem.clone();
+			var duplicate = src_elem.clone(); // TODO check if symbol elements children are handled as well.
+			// TODO ... check if replacing should happen recursively
 			duplicate.attr(new_attrs);
 			duplicate.attr('transform', new_transform);
 			elem.before(duplicate);
