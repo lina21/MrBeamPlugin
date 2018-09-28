@@ -1317,21 +1317,22 @@ class MachineCom(object):
 		if not self.isOperational():
 			return
 
-	# if not ready_to_laser_mode_cancel:
-		# first pause (feed hold) bevore doing the soft reset in order to retain machine pos.
-		self._sendCommand(self.COMMAND_HOLD)
-		time.sleep(0.5)
+		if not ready_to_laser_mode_cancel:
+			# first pause (feed hold) bevore doing the soft reset in order to retain machine pos.
+			self._sendCommand(self.COMMAND_HOLD)
+			time.sleep(0.5)
 
-		with self._commandQueue.mutex:
-			self._commandQueue.queue.clear()
-		self._cmd = None
+			with self._commandQueue.mutex:
+				self._commandQueue.queue.clear()
+			self._cmd = None
 
-		self._sendCommand(self.COMMAND_RESET)
-		self._acc_line_buffer = []
-		self._send_event.clear(completely=True)
-		self._changeState(self.STATE_LOCKED)
-
-		self._ready_to_laser_flag = False
+			self._sendCommand(self.COMMAND_RESET)
+			self._acc_line_buffer = []
+			self._send_event.clear(completely=True)
+			self._changeState(self.STATE_LOCKED)
+		else:
+			self._ready_to_laser_flag = False
+			self._changeState(self.STATE_OPERATIONAL)
 
 		payload = {
 			"file": self._currentFile.getFilename(),
