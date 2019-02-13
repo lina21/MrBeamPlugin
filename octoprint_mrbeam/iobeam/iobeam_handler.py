@@ -575,7 +575,7 @@ class IoBeamHandler(object):
 		elif action == self.MESSAGE_ACTION_FAN_FACTOR:
 			self._call_callback(IoBeamValueEvents.FAN_FACTOR_RESPONSE, message, payload)
 		else:
-			self._logger.warn("Received fan data: '%s'", message)
+			self._logger.info("Received fan data: '%s'", message)
 
 		return 0
 
