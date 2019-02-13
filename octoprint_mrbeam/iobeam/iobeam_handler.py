@@ -115,7 +115,9 @@ class IoBeamHandler(object):
 	MESSAGE_ACTION_FAN_STATE =          "state"
 	MESSAGE_ACTION_FAN_DYNAMIC =        "dynamic"
 	MESSAGE_ACTION_FAN_CONNECTED =      "connected"
-
+	MESSAGE_ACTION_FAN_SERIAL =         "serial"
+	MESSAGE_ACTION_FAN_EXHAUST =        "exhaust"
+	MESSAGE_ACTION_FAN_LINK_QUALITY =   "link_quality"
 
 	def __init__(self, event_bus, socket_file=None):
 		self._event_bus = event_bus
@@ -548,11 +550,21 @@ class IoBeamHandler(object):
 			return 0
 		elif action == self.MESSAGE_ACTION_FAN_STATE:
 			return 0
+		elif action == self.MESSAGE_ACTION_FAN_SERIAL:
+			self._logger.info("Received fan serial %s: '%s'", value, message)
+			return 0
+		elif action == self.MESSAGE_ACTION_FAN_EXHAUST and len(token) > 2:
+			self._logger.info("Received exhaust %s %s: '%s'", value, token[2], message)
+			return 0
+		elif action == self.MESSAGE_ACTION_FAN_LINK_QUALITY and len(token) > 2:
+			self._logger.info("Received link quality %s %s: '%s'", value, token[2], message)
+			return 0
 
 		# check if OK otherwise it's an error
 		success = value == self.MESSAGE_OK
 		payload = dict(success=success)
-		if not success: payload['error'] = token[2] if len(token) > 2 else None
+		if not success:
+			payload['error'] = token[2] if len(token) > 2 else None
 
 		if action == self.MESSAGE_ACTION_FAN_ON:
 			self._call_callback(IoBeamValueEvents.FAN_ON_RESPONSE, message, payload)
@@ -563,7 +575,7 @@ class IoBeamHandler(object):
 		elif action == self.MESSAGE_ACTION_FAN_FACTOR:
 			self._call_callback(IoBeamValueEvents.FAN_FACTOR_RESPONSE, message, payload)
 		else:
-			return self._handle_invalid_message(message)
+			self._logger.warn("Received fan data: '%s'", message)
 
 		return 0
 
