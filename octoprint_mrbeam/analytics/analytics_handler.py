@@ -6,6 +6,7 @@ import netifaces
 import sys
 import fileinput
 import re
+import uuid
 
 from datetime import datetime
 from value_collector import ValueCollector
@@ -22,7 +23,7 @@ _instance = None
 def analyticsHandler(plugin):
 	global _instance
 	if _instance is None:
-		_instance = AnalyticsHandler(plugin._event_bus, plugin._settings)
+		_instance = AnalyticsHandler(plugin)
 	return _instance
 
 def existing_analyticsHandler():
@@ -39,14 +40,17 @@ class AnalyticsHandler(object):
 	DELETE_FILES_AFTER_UPLOAD = True
 
 
-	def __init__(self, event_bus, settings):
-		self._event_bus = event_bus
-		self._settings = settings
+	def __init__(self, plugin):
+		self._plugin = plugin
+		self._event_bus = plugin._event_bus
+		self._settings = plugin._settings
 
 		self._logger = mrb_logger("octoprint.plugins.mrbeam.analytics.analyticshandler")
 
 		self._analyticsOn = self._settings.get(['analyticsEnabled'])
 		self._camAnalyticsOn = self._settings.get(['analytics','cam_analytics'])
+
+		self._session_id = "{uuid}@{serial}".format(serial=self._plugin.getSerialNum(), uuid=uuid.uuid4().hex)
 
 		self._current_job_id = None
 		self._isJobPaused = False
@@ -65,10 +69,11 @@ class AnalyticsHandler(object):
 		self._logevent_version = 1
 		self._dust_log_version = 2
 		self._cam_event_log_version = 2
+		self._connectivity_event_log_version = 1
 
 		self.event_waiting_for_terminal_dump = None
 
-		self._logger.info("Analytics user permission: analyticsEnabled=%s", self._analyticsOn)
+		self._logger.info("Analytics analyticsEnabled: %s, sid: %s", self._analyticsOn, self._session_id)
 
 		self.analyticsfolder = os.path.join(self._settings.getBaseFolder("base"), self._settings.get(['analytics','folder']))
 		if not os.path.isdir(self.analyticsfolder):
@@ -116,6 +121,7 @@ class AnalyticsHandler(object):
 		self._event_bus.subscribe(MrBeamEvents.LASER_JOB_DONE, self._event_laser_job_done)
 		self._event_bus.subscribe(OctoPrintEvents.STARTUP, self._event_startup)
 		self._event_bus.subscribe(OctoPrintEvents.SHUTDOWN, self._event_shutdown)
+		self._event_bus.subscribe(MrBeamEvents.ANALYTICS_DATA, self._other_plugin_data)
 
 
 	@staticmethod
@@ -160,20 +166,29 @@ class AnalyticsHandler(object):
 			self._activate_analytics()
 			self._write_deviceinfo(ak.ANALYTICS_ENABLED, payload=dict(enabled=True))
 		else:
+			# can not log this since the user just disagreed
 			# self._write_deviceinfo(ak.ANALYTICS_ENABLED, payload=dict(enabled=False))
 			self._analyticsOn = False
 			self._settings.set_boolean(["analyticsEnabled"], False)
 
-	def log_event(self, level, msg, caller=None, exception_str=None, stacktrace=None, wait_for_terminal_dump=False):
-		event = ak.LOG
+	def log_event(self, level, msg,
+	              module=None,
+	              component=None,
+	              component_version=None,
+	              caller=None,
+	              exception_str=None,
+	              stacktrace=None,
+	              wait_for_terminal_dump=False):
 		filename = caller.filename.replace(__package_path__ + '/', '')
+		payload = dict(
+			level= logging._levelNames[level] if level in logging._levelNames else level,
+			msg= msg,
+			module=module,
+			component= component or _mrbeam_plugin_implementation._identifier,
+			component_version= component_version or _mrbeam_plugin_implementation._plugin_version
+		)
 		if exception_str:
-			event = ak.EXCEPTION
-		payload = {
-			'level': logging._levelNames[level] if level in logging._levelNames else level,
-			'msg': msg,
-			ak.VERSION_MRBEAM_PLUGIN: _mrbeam_plugin_implementation._plugin_version
-		}
+			payload['level'] = ak.EXCEPTION
 		if caller is not None:
 			payload.update({
 				'hash': hash('{}{}{}'.format(filename, caller.lineno, _mrbeam_plugin_implementation._plugin_version)),
@@ -189,18 +204,16 @@ class AnalyticsHandler(object):
 
 		if wait_for_terminal_dump:
 			self.event_waiting_for_terminal_dump = dict(
-				event = event,
 				payload = payload,
 			)
 		else:
-			self._write_log_event(event, payload=payload)
+			self._write_log_event(payload=payload)
 
 	def log_terminal_dump(self, dump):
 		if self.event_waiting_for_terminal_dump is not None:
-			event = self.event_waiting_for_terminal_dump['event']
 			payload = self.event_waiting_for_terminal_dump['payload']
 			payload['terminal_dump'] = dump
-			self._write_log_event(event, payload=payload)
+			self._write_log_event(payload=payload)
 			self.event_waiting_for_terminal_dump = None
 		else:
 			self._logger.warn("log_terminal_dump() called but no foregoing event tracked. self.event_waiting_for_terminal_dump is None. ignoring this dump.")
@@ -268,12 +281,12 @@ class AnalyticsHandler(object):
 			statvfs = os.statvfs('/')
 			total_space = statvfs.f_frsize * statvfs.f_blocks
 			available_space = statvfs.f_frsize * statvfs.f_bavail  # Available space for non-super users
-			used_space = '{used}%'.format(used=round((total_space - available_space) * 100 / total_space))
+			used_percent = round((total_space - available_space) * 100 / total_space)
 
 			disk_space = {
 				ak.TOTAL_SPACE: total_space,
 				ak.AVAILABLE_SPACE: available_space,
-				ak.USED_SPACE: used_space,
+				ak.USED_SPACE: used_percent,
 			}
 			self._write_deviceinfo(ak.DISK_SPACE, payload=disk_space)
 
@@ -349,7 +362,7 @@ class AnalyticsHandler(object):
 			ak.PROGRESS_LASER_TEMPERATURE: self._current_lasertemp_collector.get_latest_value(),
 			ak.PROGRESS_LASER_INTENSITY: self._current_intensity_collector.get_latest_value(),
 			ak.PROGRESS_DUST_VALUE: self._current_dust_collector.get_latest_value(),
-			ak.JOB_DURATION: int(round(payload['time']))
+			ak.JOB_DURATION: round(payload['time'], 1)
 		}
 		self._write_jobevent(ak.PRINT_PROGRESS, data)
 
@@ -372,6 +385,42 @@ class AnalyticsHandler(object):
 				data[ak.LASERTEMP] = self._current_lasertemp_collector.get_latest_value()
 			self._write_jobevent(ak.COOLING_DONE,payload=data)
 			self._isCoolingPaused = False
+
+	def _other_plugin_data(self, event, payload):
+		try:
+			if 'plugin' in payload and 'eventname' in payload:
+				plugin = payload.get('plugin')
+				if plugin == "findmymrbeam":
+					eventname = payload.get('eventname')
+					data = payload.get('data', None)
+					self._write_event(ak.TYPE_CONNECTIVITY_EVENT, eventname, self._connectivity_event_log_version, payload=dict(data=data))
+				else:
+					self._logger.warn("Unknown plugin: '%s'. payload: %s", plugin, event)
+			else:
+				self._logger.warn("Invalid payload data in event %s", event)
+		except Exception as e:
+			self._logger.error('Exception during log_ui_render_calls: {}'.format(e.message))
+
+	def log_ui_render_calls(self, host, remote_ip, referrer, language):
+		try:
+			data=dict(
+				host=host,
+				remote_ip=remote_ip,
+				referrer=referrer,
+				language=language
+			)
+			self._write_event(ak.TYPE_CONNECTIVITY_EVENT, ak.EVENT_UI_RENDER_CALL, self._connectivity_event_log_version, payload=dict(data=data))
+		except Exception as e:
+			self._logger.error('Exception during log_ui_render_calls: {}'.format(e.message))
+
+	def log_client_opened(self, remote_ip):
+		try:
+			data=dict(
+				remote_ip=remote_ip
+			)
+			self._write_event(ak.TYPE_CONNECTIVITY_EVENT, ak.EVENT_CLIENT_OPENED, self._connectivity_event_log_version, payload=dict(data=data))
+		except Exception as e:
+			self._logger.error('Exception during log_client_opened: {}'.format(e.message))
 
 	def write_cam_update(self,newMarkers,newCorners):
 		try:
@@ -427,11 +476,13 @@ class AnalyticsHandler(object):
 	def _store_conversion_details(self,eventname,payload=None):
 		data = {
 			ak.SERIALNUMBER: self._getSerialNumber(),
-			ak.TYPE: ak.JOB_EVENT,
+			ak.TYPE: ak.TYPE_JOB_EVENT,
 			ak.VERSION: self._jobevent_log_version,
 			ak.EVENT: eventname,
 			ak.TIMESTAMP: time.time(),
-			ak.JOB_ID: None
+			ak.JOB_ID: None,
+			ak.NTP_SYNCED: _mrbeam_plugin_implementation.is_time_ntp_synced(),
+			ak.SESSION_ID: self._session_id
 		}
 		if payload is not None:
 			data.update(payload)
@@ -455,17 +506,17 @@ class AnalyticsHandler(object):
 			# TODO add data validation/preparation here
 			if payload is not None:
 				data[ak.DATA] = payload
-			self._write_event(ak.DEVICE_EVENT, event, self._deviceinfo_log_version, payload=data)
+			self._write_event(ak.TYPE_DEVICE_EVENT, event, self._deviceinfo_log_version, payload=data)
 		except Exception as e:
 			self._logger.error('Error during write_device_info: {}'.format(e.message))
 
-	def _write_log_event(self, event, payload=None):
+	def _write_log_event(self, payload=None):
 		try:
 			data = dict()
 			# TODO add data validation/preparation here
 			if payload is not None:
 				data[ak.DATA] = payload
-			self._write_event(ak.LOG_EVENT, event, self._logevent_version, payload=data)
+			self._write_event(ak.TYPE_LOG_EVENT, ak.EVENT_LOG, self._logevent_version, payload=data)
 		except Exception as e:
 			self._logger.error('Error during _write_log_event: {}'.format(e.message), analytics=False)
 
@@ -481,7 +532,7 @@ class AnalyticsHandler(object):
 			if payload is not None:
 				data[ak.DATA] = payload
 
-			_jobevent_type = ak.JOB_EVENT
+			_jobevent_type = ak.TYPE_JOB_EVENT
 			self._write_event(_jobevent_type, event, self._jobevent_log_version, payload=data)
 		except Exception as e:
 			self._logger.error('Error during write_jobevent: {}'.format(e.message))
@@ -511,7 +562,7 @@ class AnalyticsHandler(object):
 				if payload is not None:
 					data[ak.DATA] = payload
 
-				self._write_event(ak.CAM_EVENT, ak.PIC_PREP, self._cam_event_log_version, payload=data)
+				self._write_event(ak.TYPE_CAM_EVENT, ak.PIC_PREP, self._cam_event_log_version, payload=data)
 		except Exception as e:
 			self._logger.error('Error during write_cam_event: {}'.format(e.message))
 
@@ -523,7 +574,7 @@ class AnalyticsHandler(object):
 				if payload is not None:
 					data[ak.DATA] = payload
 
-				self._write_event(ak.CAM_EVENT, eventname, self._cam_event_log_version, payload=data)
+				self._write_event(ak.TYPE_CAM_EVENT, eventname, self._cam_event_log_version, payload=data)
 		except Exception as e:
 			self._logger.error('Error during write_cam_event: {}'.format(e.message))
 
@@ -535,7 +586,8 @@ class AnalyticsHandler(object):
 				ak.VERSION: version,
 				ak.EVENT: eventname,
 				ak.TIMESTAMP: time.time(),
-				ak.NTP_SYNCED: _mrbeam_plugin_implementation.is_time_ntp_synced()
+				ak.NTP_SYNCED: _mrbeam_plugin_implementation.is_time_ntp_synced(),
+				ak.SESSION_ID: self._session_id
 			}
 			if payload is not None:
 				data.update(payload)

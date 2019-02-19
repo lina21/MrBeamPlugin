@@ -251,7 +251,7 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 				support_mode = False,
 				grbl_auto_update_enabled = True
 			),
-			analyticsEnabled=True,
+			analyticsEnabled=None,
 			analytics=dict(
 				cam_analytics = False,
 				folder = 'analytics', # laser job analytics base folder (.octoprint/...)
@@ -376,10 +376,10 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 		# template, using the render_kwargs as provided by OctoPrint
 		from flask import make_response, render_template, g
 
-		self._track_calls(request)
-
 		firstRun = render_kwargs['firstRun']
 		language = g.locale.language if g.locale else "en"
+
+		self._track_ui_render_calls(request, language)
 
 		enable_accesscontrol = self._user_manager.enabled
 		accesscontrol_active = enable_accesscontrol and self._user_manager.hasBeenCustomized()
@@ -448,14 +448,18 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 		return r
 
 
-	def _track_calls(self, request):
-		my_call = dict(host=request.host,
-		               ref=request.referrer,
-		               remote_ip=request.headers.get("X-Forwarded-For"))
-		if not my_call in self.called_hosts:
-			self.called_hosts.append(my_call)
-			self._logger.info("First call received from: %s", my_call)
-			self._logger.info("All unique calls: %s", self.called_hosts)
+	def _track_ui_render_calls(self, request, language):
+		remote_ip = request.headers.get("X-Forwarded-For")
+		if remote_ip is not None:
+			my_call = dict(host=request.host,
+			               ref=request.referrer,
+			               remote_ip=remote_ip,
+			               language=language)
+			if not my_call in self.called_hosts:
+				self.called_hosts.append(my_call)
+				self._logger.info("First call received from: %s", my_call)
+				self._logger.info("All unique calls: %s", self.called_hosts)
+			self._analytics_handler.log_ui_render_calls(host=my_call['host'], remote_ip=my_call['remote_ip'], referrer=my_call['ref'], language=language)
 
 	##~~ TemplatePlugin mixin
 
@@ -521,7 +525,7 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 		return dict()
 
 	def get_wizard_version(self):
-		return 13 #random number. but we can't go down anymore, just up.
+		return 14 #random number. but we can't go down anymore, just up.
 
 	def on_wizard_finish(self, handled):
 		self._logger.info("Setup Wizard finished.")
@@ -616,55 +620,55 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 
 	def _get_whatsnew_1_wizard_name(self):
 		# jinja has some js that changes this to German if lang is 'de'
-		return gettext("Total Job Duration")
+		return gettext("Lights showing WiFi state")
 
-	def _is_whatsnew_2_wizard_required(self):
-		result = not self.isFirstRun()
-		self._logger.debug("_is_whatsnew_2_wizard_required() %s", result)
-		return result
-
-	def _get_whatsnew_2_wizard_details(self):
-		return dict()
-
-	def _get_whatsnew_2_additional_wizard_template_data(self):
-		return dict(mandatory=False, suffix="_whatsnew_2")
-
-	def _get_whatsnew_2_wizard_name(self):
-		# jinja has some js that changes this to German if lang is 'de'
-		return gettext("Custom Material Settings")
-
-	def _is_whatsnew_3_wizard_required(self):
-		result = not self.isFirstRun()
-		self._logger.debug("_is_whatsnew_4_wizard_required() %s", result)
-		return result
-
-	def _get_whatsnew_3_wizard_details(self):
-		return dict()
-
-	def _get_whatsnew_3_additional_wizard_template_data(self):
-		return dict(mandatory=False, suffix="_whatsnew_3")
-
-	def _get_whatsnew_3_wizard_name(self):
-		# jinja has some js that changes this to German if lang is 'de'
-		return gettext("Engraving Algorithms")
-
-	def _is_whatsnew_4_wizard_required(self):
-		result = not self.isFirstRun()
-		self._logger.debug("_is_whatsnew_4_wizard_required() %s", result)
-		return result
-
-	def _get_whatsnew_4_wizard_details(self):
-		return dict()
-
-	def _get_whatsnew_4_additional_wizard_template_data(self):
-		return dict(mandatory=False, suffix="_whatsnew_4")
-
-	def _get_whatsnew_4_wizard_name(self):
-		# jinja has some js that changes this to German if lang is 'de'
-		return gettext("...and more")
+	# def _is_whatsnew_2_wizard_required(self):
+	# 	result = not self.isFirstRun()
+	# 	self._logger.debug("_is_whatsnew_2_wizard_required() %s", result)
+	# 	return result
+	#
+	# def _get_whatsnew_2_wizard_details(self):
+	# 	return dict()
+	#
+	# def _get_whatsnew_2_additional_wizard_template_data(self):
+	# 	return dict(mandatory=False, suffix="_whatsnew_2")
+	#
+	# def _get_whatsnew_2_wizard_name(self):
+	# 	# jinja has some js that changes this to German if lang is 'de'
+	# 	return gettext("Custom Material Settings")
+	#
+	# def _is_whatsnew_3_wizard_required(self):
+	# 	result = not self.isFirstRun()
+	# 	self._logger.debug("_is_whatsnew_4_wizard_required() %s", result)
+	# 	return result
+	#
+	# def _get_whatsnew_3_wizard_details(self):
+	# 	return dict()
+	#
+	# def _get_whatsnew_3_additional_wizard_template_data(self):
+	# 	return dict(mandatory=False, suffix="_whatsnew_3")
+	#
+	# def _get_whatsnew_3_wizard_name(self):
+	# 	# jinja has some js that changes this to German if lang is 'de'
+	# 	return gettext("Engraving Algorithms")
+	#
+	# def _is_whatsnew_4_wizard_required(self):
+	# 	result = not self.isFirstRun()
+	# 	self._logger.debug("_is_whatsnew_4_wizard_required() %s", result)
+	# 	return result
+	#
+	# def _get_whatsnew_4_wizard_details(self):
+	# 	return dict()
+	#
+	# def _get_whatsnew_4_additional_wizard_template_data(self):
+	# 	return dict(mandatory=False, suffix="_whatsnew_4")
+	#
+	# def _get_whatsnew_4_wizard_name(self):
+	# 	# jinja has some js that changes this to German if lang is 'de'
+	# 	return gettext("...and more")
 
 	def _is_analytics_wizard_required(self):
-		result = not self.isFirstRun()
+		result = self._settings.get(['analyticsEnabled']) is None
 		self._logger.debug("_is_analytics_wizard_required() %s", result)
 		return result
 
@@ -1556,6 +1560,7 @@ class MrBeamPlugin(octoprint.plugin.SettingsPlugin,
 			self._logger.error("on_event() Error Event! Message: %s", payload['error'])
 
 		if event == OctoPrintEvents.CLIENT_OPENED:
+			self._analytics_handler.log_client_opened(payload.get('remoteAddress', None))
 			self._replay_stored_frontend_notification()
 
 	def fire_event(self, event, payload=None):
@@ -2047,7 +2052,8 @@ def __plugin_load__():
 		appearance=dict(components=dict(
 			order=dict(
 				wizard=["plugin_mrbeam_wifi", "plugin_mrbeam_acl", "plugin_mrbeam_lasersafety",
-				        "plugin_mrbeam_whatsnew_0", "plugin_mrbeam_whatsnew_1", "plugin_mrbeam_whatsnew_2", "plugin_mrbeam_whatsnew_3", "plugin_mrbeam_whatsnew_4"],
+				        "plugin_mrbeam_whatsnew_0", "plugin_mrbeam_whatsnew_1", "plugin_mrbeam_whatsnew_2", "plugin_mrbeam_whatsnew_3", "plugin_mrbeam_whatsnew_4",
+				        "plugin_mrbeam_analytics"],
 				settings = ['plugin_mrbeam_about', 'plugin_softwareupdate', 'accesscontrol', 'plugin_netconnectd', 'plugin_findmymrbeam', 'plugin_mrbeam_conversion',
 				            'plugin_mrbeam_camera', 'plugin_mrbeam_analytics', 'logs', 'plugin_mrbeam_debug']
 			),
