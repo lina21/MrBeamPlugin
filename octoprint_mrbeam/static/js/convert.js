@@ -1137,7 +1137,6 @@ $(function(){
 		};
 
 		self._isValidVectorSetting = function(intensity, feedrate, passes, pierce_time){
-		    console.log(intensity)
 			if(intensity === '' || intensity > 100 || intensity < 0) return false;
 			if(feedrate === '' || feedrate > self.maxSpeed() || feedrate < self.minSpeed()) return false;
 			if(passes === '' || passes <= 0) return false;
@@ -1175,6 +1174,41 @@ $(function(){
 			return data;
 		};
 
+		self.get_design_files_info = function () {
+		    /**
+             * Get information about the design files that are going to be lasered.
+             * @return {Object} The information about the design files.
+             */
+		    let data = [];
+		    let placedDesigns = self.workingArea.placedDesigns();
+            for (let i = 0; i < placedDesigns.length; i++) {
+                let currentDesign = placedDesigns[i];
+
+                let dim_x = $('#' + currentDesign.id).find('.horizontal').val();
+                let dim_y = $('#' + currentDesign.id).find('.vertical').val();
+
+                let typePath = currentDesign.typePath;
+                let format = typePath[typePath.length - 1];
+
+                let sub_format;
+                if (format === "image") {
+                    let file_name = $('#' + currentDesign.id).find('.title').text();
+                    sub_format = file_name.split('.').pop(-1).toLowerCase();
+                }
+
+                let size = currentDesign.size;
+
+                data.push({
+                    dim_x: dim_x,
+                    dim_y: dim_y,
+                    format: format,
+                    sub_format: sub_format,
+                    size: size
+                });
+            }
+			return data;
+        };
+
 		self.is_advanced_settings_checked = function () {
             const advancedSettingsCb = $('#parameter_assignment_show_advanced_settings_cb');
             let isChecked = advancedSettingsCb.is(':checked')
@@ -1193,6 +1227,39 @@ $(function(){
 				return true;
 			}
 		});
+
+
+		self._allJobsSkipped = function(){
+		    /**
+             * Check if all the jobs (engraving+cutting) were set to be skipped.
+             * @return {boolean} Indicator of all jobs having been moved to the "Skip" area.
+             */
+		    let allSkipped;
+
+		    // Check if there is a job to be skipped
+            if ($('#no_job .color_drop_zone').children().length > 0) {
+                allSkipped = true;
+
+                //Check if there is also an engraving or cutting job
+                if ($('#engrave_job .color_drop_zone').children(':visible').length > 0) {
+                    allSkipped = false;
+                } else {
+                    let vector_jobs = $('.job_row_vector');
+                    for (let i = 0; i < vector_jobs.length; i++) {
+                        const vjob = vector_jobs[i];
+                        const colorDrops = $(vjob).find('.color_drop_zone');
+
+                        if (colorDrops.children().length > 0) {
+                            allSkipped = false;
+                        }
+                    }
+                }
+            } else {
+                allSkipped = false;
+            }
+
+            return allSkipped
+        };
 
 		self._validJobForMaterial = function() {
             /**
@@ -1234,6 +1301,27 @@ $(function(){
                 }
             }
 
+        };
+
+		self.moveJobsToEngravingColorDefaultOption = function(color) {
+            /**
+             * Move all cutting jobs to engraving when the selected color in a material does not have cutting parameters
+             * @param color The object with the user selected color
+             */
+            if (!self.engraveOnlyForced) {
+                let hasCut = false;
+                let material = self.selected_material();
+
+                if (color in material .colors && material.colors[color].cut.length > 0) {
+                    hasCut = true;
+                }
+
+                if (!hasCut) {
+                    self.forceEngraveOnly();
+                }
+            } else {
+                self.undoForceEngraveOnly();
+            }
         };
 
         self.moveJobsToEngravingDefaultOption = function(material) {
@@ -1281,6 +1369,8 @@ $(function(){
                     console.log('Cutting job: ' + cuttingJob.id);
                 }
             }
+
+            ko.dataFor(document.getElementById("dialog_vector_graphics_conversion"))._update_color_assignments();
         };
 
 		self.undoForceEngraveOnly = function() {
@@ -1300,6 +1390,8 @@ $(function(){
                     ($('#first_job > .span3 > .color_drop_zone')).append(moveEng);
                 }
             }
+
+            ko.dataFor(document.getElementById("dialog_vector_graphics_conversion"))._update_color_assignments();
         };
 
 		self._allParametersSet = function(){
@@ -1370,6 +1462,13 @@ $(function(){
 		self.convert = function() {
 			if(self.gcodeFilesToAppend.length === 1 && self.svg === undefined) {
                 self.files.startGcodeWithSafetyWarning(self.gcodeFilesToAppend[0]);
+            } else if (self._allJobsSkipped()) {
+			    const message = "There is nothing to laser, all jobs are set to be skipped.";
+
+			    $('#empty_job_support_link').hide();
+			    $('#empty_job_modal').find('.modal-body p').text(message);
+                $('#empty_job_modal').modal('show');
+
             } else if (!self._validJobForMaterial()) {
 			    let valid;
 			    if (self.has_cutting_proposal()) {
@@ -1388,6 +1487,7 @@ $(function(){
                 const message = "Sorry but the " + designType + " can only be " + valid +
                     ", which is not supported for this material.";
 
+			    $('#empty_job_support_link').show();
 			    $('#empty_job_modal').find('.modal-body p').text(message);
                 $('#empty_job_modal').modal('show');
 			} else {
@@ -1406,6 +1506,7 @@ $(function(){
 						var advancedSettings = self.is_advanced_settings_checked();
 						var colorStr = '<!--COLOR_PARAMS_START' +JSON.stringify(multicolor_data) + 'COLOR_PARAMS_END-->';
 						var material = self.get_current_material_settings();
+						var design_files = self.get_design_files_info();
 						var data = {
 							command: "convert",
 							engrave: self.do_engrave(),
@@ -1414,6 +1515,7 @@ $(function(){
 							slicer: "svgtogcode",
 							gcode: gcodeFilename,
                             material: material,
+                            design_files: design_files,
                             advanced_settings: advancedSettings
 						};
 
